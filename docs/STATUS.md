@@ -44,4 +44,4 @@
 - [ ] OCR 正文通过：未执行。
 - [ ] 真机验收/P0.5：未执行，不能宣称通过。
 
-最新 APK：`D:\Projects\sakurazaka-translator\app\build\outputs\apk\debug\app-debug.apk`；SHA-256 `2FA1E9E03397323DEE5392260CB1C6A0E6DDD0FC3B83CF09B1F3EE7AC644839A`；大小 `53,683,519` 字节。该包已收紧普通内容变化和悬浮窗窗口事件过滤，并在移除卡片前解除 Bitmap 引用，待手机复测。
+最新 APK：`D:\Projects\sakurazaka-translator\app\build\outputs\apk\debug\app-debug.apk`；SHA-256 `1B8C9B66EFE45189B05E382DFE54E2A7839D3C250B39E81062034B4E1A676799`；大小 `53,683,519` 字节。该包进一步过滤探针自身 `TYPE_WINDOW_STATE_CHANGED`，并保留普通内容变化、悬浮窗窗口事件过滤及移除卡片前解除 Bitmap 引用，待手机复测。

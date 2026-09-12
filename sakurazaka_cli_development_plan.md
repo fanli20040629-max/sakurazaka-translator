@@ -1120,6 +1120,6 @@ adb devices -l
 
 第 28.7 节 A1～A5 已实际实施并完成桌面验证。`RequestGate` 现在保留物理任务占用直到截图/OCR 完成，同时用独立逻辑有效状态拒绝旧结果；`ResourceLease` 保证 Bitmap 在 OCR 完成且预览解绑后单次释放；服务销毁延迟关闭在途资源；页面结果绑定 requestId/pageEpoch/包名/windowId；锁屏、前台变化和目标事件会使结果失效，卡片滚动不触发目标页面失效；合成测试默认关闭且需要显式开关；失败卡片、OCR 块边界、耗时、错误码和遍历截断提示已加入。
 
-实际证据：`verify-probe-logic.ps1` PASS；`:app:lintDebug` 成功（0 error、1 个 Gradle 版本提示）；`:app:assembleDebug` 成功；最终 APK 包名 `com.fanli.sakurazakatranslator`、版本 `0.1.0-probe`、大小 `53,683,519` 字节、SHA-256 `2FA1E9E03397323DEE5392260CB1C6A0E6DDD0FC3B83CF09B1F3EE7AC644839A`，无 INTERNET/ACCESS_NETWORK_STATE，包含 bundled 日文 OCR 模型。随后针对手机反馈，已过滤普通 `TYPE_WINDOW_CONTENT_CHANGED` 和悬浮窗导致的 `TYPE_WINDOWS_CHANGED` 失效路径，移除卡片前先解除 ImageView 的 Bitmap 引用。ADB 无设备，故安装、截图、OCR 正文、合成真机验收及目标 App 四类页面仍待执行；P0.5 不得标为通过。
+实际证据：`verify-probe-logic.ps1` PASS；`:app:lintDebug` 成功（0 error、1 个 Gradle 版本提示）；`:app:assembleDebug` 成功；最终 APK 包名 `com.fanli.sakurazakatranslator`、版本 `0.1.0-probe`、大小 `53,683,519` 字节、SHA-256 `1B8C9B66EFE45189B05E382DFE54E2A7839D3C250B39E81062034B4E1A676799`，无 INTERNET/ACCESS_NETWORK_STATE，包含 bundled 日文 OCR 模型。随后针对手机反馈，已过滤探针自身 `TYPE_WINDOW_STATE_CHANGED`、普通 `TYPE_WINDOW_CONTENT_CHANGED` 和悬浮窗导致的 `TYPE_WINDOWS_CHANGED` 失效路径，移除卡片前先解除 ImageView 的 Bitmap 引用。ADB 已重新识别设备；该包待安装复测，截图、OCR 正文、合成真机验收及目标 App 四类页面仍待执行；P0.5 不得标为通过。
 
 下一入口是 B：连接设备、安装上述 APK、开启无障碍服务并先完成内置合成页验收；B 通过后才进入 C 目标 App 四类页面，不进入翻译开发。

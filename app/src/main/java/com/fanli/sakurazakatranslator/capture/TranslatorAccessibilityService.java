@@ -102,11 +102,19 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             refreshTriggerVisibility();
             return;
         }
+        String eventPackage = event.getPackageName() == null
+                ? null : event.getPackageName().toString();
+        // Showing or refocusing this app's own synthetic page is not a target
+        // page transition. The foreground window identity check below still
+        // handles an actual application/window change.
+        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                && getPackageName().equals(eventPackage)) {
+            refreshTriggerVisibility();
+            return;
+        }
         if (isPageEvent(event.getEventType())) {
             WindowSnapshot active = activeApplication();
             updateForegroundIdentity(active);
-            String eventPackage = event.getPackageName() == null
-                    ? null : event.getPackageName().toString();
             if (active != null && eventPackage != null
                     && eventPackage.equals(active.packageName)
                     && isAllowedPackage(eventPackage)) {
