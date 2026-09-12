@@ -30,6 +30,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.fanli.sakurazakatranslator.ProbePreferences;
+import com.fanli.sakurazakatranslator.R;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
@@ -49,8 +50,10 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private final ExecutorService screenshotExecutor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final Object lifecycleLock = new Object();
     private final TextRecognizer recognizer = TextRecognition.getClient(
             new JapaneseTextRecognizerOptions.Builder().build());
+    private final ProbeLogic.RequestGate requestGate = new ProbeLogic.RequestGate();
 
     private WindowManager windowManager;
     private KeyguardManager keyguardManager;
@@ -58,14 +61,21 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     private LinearLayout preview;
     private TextView ocrLabel;
     private CaptureJob previewJob;
-    private final ProbeLogic.RequestGate requestGate = new ProbeLogic.RequestGate();
+    private CaptureJob inFlightJob;
     private boolean destroyed;
     private boolean receiverRegistered;
+    private boolean recognizerClosed;
+    private long pageEpoch;
+    private String foregroundPackage;
+    private int foregroundWindowId = -1;
 
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) invalidateAndClear();
-            else refreshTriggerVisibility();
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                invalidateAndClear(true);
+            } else {
+                refreshTriggerVisibility();
+            }
         }
     };
 
@@ -87,76 +97,152 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null || destroyed) return;
+        if (isPreviewScrollEvent(event)) {
+            refreshTriggerVisibility();
+            return;
+        }
+        if (isPageEvent(event.getEventType())) {
+            WindowSnapshot active = activeApplication();
+            updateForegroundIdentity(active);
+            String eventPackage = event.getPackageName() == null
+                    ? null : event.getPackageName().toString();
+            if (active != null && eventPackage != null
+                    && eventPackage.equals(active.packageName)
+                    && isAllowedPackage(eventPackage)) {
+                markPageChanged();
+            }
+        }
         refreshTriggerVisibility();
     }
 
     @Override public void onInterrupt() {
-        invalidateAndClear();
+        invalidateAndClear(true);
     }
 
     private void refreshTriggerVisibility() {
-        if (destroyed || windowManager == null || isLocked()) {
-            invalidateAndClear();
+        if (destroyed || windowManager == null) {
+            invalidateAndClear(true);
             return;
         }
-        String foregroundPackage = foregroundApplicationPackage();
-        if (isAllowedPackage(foregroundPackage)) showTrigger();
-        else {
+        if (isLocked()) {
+            invalidateAndClear(true);
+            return;
+        }
+        WindowSnapshot active = activeApplication();
+        updateForegroundIdentity(active);
+        if (active != null && isAllowedPackage(active.packageName)) {
+            showTrigger();
+        } else {
             removeTrigger();
-            invalidateAndClear();
+            invalidateAndClear(false);
         }
     }
 
     private boolean isAllowedPackage(String packageName) {
         if (packageName == null || packageName.isBlank()) return false;
-        if (getPackageName().equals(packageName)) return true;
+        if (getPackageName().equals(packageName)) {
+            return ProbePreferences.syntheticMode(this);
+        }
         String configured = ProbePreferences.targetPackage(this);
         return !configured.isBlank() && configured.equals(packageName);
     }
 
-    private String foregroundApplicationPackage() {
-        List<AccessibilityWindowInfo> windows = getWindows();
+    private WindowSnapshot activeApplication() {
+        List<AccessibilityWindowInfo> windows;
+        try {
+            windows = getWindows();
+        } catch (RuntimeException error) {
+            return null;
+        }
         if (windows == null) return null;
         for (AccessibilityWindowInfo window : windows) {
-            if (window.getType() == AccessibilityWindowInfo.TYPE_APPLICATION && window.isActive()) {
-                AccessibilityNodeInfo root = window.getRoot();
-                if (root != null && root.getPackageName() != null) return root.getPackageName().toString();
+            if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION || !window.isActive()) {
+                continue;
+            }
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root == null) continue;
+            try {
+                CharSequence packageName = root.getPackageName();
+                if (packageName != null) {
+                    return new WindowSnapshot(packageName.toString(), window.getId());
+                }
+            } finally {
+                root.recycle();
             }
         }
         return null;
     }
 
+    private void updateForegroundIdentity(WindowSnapshot active) {
+        String packageName = active == null ? null : active.packageName;
+        int windowId = active == null ? -1 : active.windowId;
+        boolean hadIdentity = foregroundPackage != null || foregroundWindowId != -1;
+        boolean changed = foregroundWindowId != windowId
+                || (foregroundPackage == null ? packageName != null
+                : !foregroundPackage.equals(packageName));
+        foregroundPackage = packageName;
+        foregroundWindowId = windowId;
+        if (changed && (hadIdentity || packageName != null)) {
+            pageEpoch++;
+            requestGate.invalidate();
+            removePreview();
+        }
+    }
+
+    private void markPageChanged() {
+        pageEpoch++;
+        requestGate.invalidate();
+        removePreview();
+    }
+
     private void showTrigger() {
-        if (trigger != null) return;
-        trigger = new Button(this);
-        trigger.setText("取字探针");
-        trigger.setTextColor(Color.WHITE);
-        trigger.setBackgroundColor(Color.rgb(40, 90, 160));
+        if (trigger != null || destroyed || windowManager == null || isLocked()) return;
+        Button candidate = new Button(this);
+        candidate.setText("取字探针");
+        candidate.setTextColor(Color.WHITE);
+        candidate.setBackgroundColor(Color.rgb(40, 90, 160));
         WindowManager.LayoutParams params = overlayParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.START);
         params.y = dp(72);
         params.x = Math.max(0, getResources().getDisplayMetrics().widthPixels - dp(132));
-        enableDrag(trigger, params, this::capture);
-        windowManager.addView(trigger, params);
+        enableDrag(candidate, candidate, params, this::capture);
+        try {
+            windowManager.addView(candidate, params);
+            trigger = candidate;
+        } catch (RuntimeException ignored) {
+            trigger = null;
+        }
     }
 
     private void removeTrigger() {
-        if (trigger == null || windowManager == null) return;
-        safeRemove(trigger);
+        if (trigger != null && windowManager != null) safeRemove(trigger);
         trigger = null;
     }
 
     private AccessibilityWindowInfo targetWindow() {
-        String foreground = foregroundApplicationPackage();
-        if (!isAllowedPackage(foreground)) return null;
-        List<AccessibilityWindowInfo> windows = getWindows();
+        WindowSnapshot active = activeApplication();
+        if (active == null || !isAllowedPackage(active.packageName)) return null;
+        List<AccessibilityWindowInfo> windows;
+        try {
+            windows = getWindows();
+        } catch (RuntimeException error) {
+            return null;
+        }
         if (windows == null) return null;
         for (AccessibilityWindowInfo window : windows) {
-            if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION || !window.isActive()) continue;
+            if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION
+                    || !window.isActive() || window.getId() != active.windowId) {
+                continue;
+            }
             AccessibilityNodeInfo root = window.getRoot();
-            if (root != null && foreground.equals(String.valueOf(root.getPackageName()))) return window;
+            if (root == null) continue;
+            try {
+                if (active.packageName.equals(String.valueOf(root.getPackageName()))) return window;
+            } finally {
+                root.recycle();
+            }
         }
         return null;
     }
@@ -173,49 +259,84 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         }
         AccessibilityNodeInfo root = target.getRoot();
         if (root == null) {
-            toast("目标窗口没有可读取的节点根");
+            toast("目标窗口没有可读取的节点树");
             return;
         }
+
         final long requestId = requestGate.begin();
         if (requestId < 0) {
+            root.recycle();
             toast("识别正在进行，请等待当前任务完成");
             return;
         }
+
         removePreview();
         final long startedAt = SystemClock.elapsedRealtime();
-        final NodeReport nodeReport = collectNodes(root);
         final int windowId = target.getId();
         final String targetPackage = String.valueOf(root.getPackageName());
+        final long capturedEpoch = pageEpoch;
+        final NodeReport nodeReport;
+        try {
+            nodeReport = collectNodes(root);
+        } finally {
+            root.recycle();
+        }
 
         try {
             takeScreenshotOfWindow(windowId, screenshotExecutor, new TakeScreenshotCallback() {
-            @Override public void onFailure(int errorCode) {
-                main.post(() -> finishScreenshotFailure(requestId, nodeReport, errorCode, startedAt));
-            }
+                @Override public void onFailure(int errorCode) {
+                    main.post(() -> finishScreenshotFailure(
+                            requestId, nodeReport, targetPackage, windowId, capturedEpoch,
+                            errorCode, startedAt));
+                }
 
-            @Override public void onSuccess(ScreenshotResult result) {
-                Bitmap software = copyScreenshot(result);
-                if (software == null) {
-                    main.post(() -> finishScreenshotFailure(requestId, nodeReport, -1, startedAt));
-                    return;
+                @Override public void onSuccess(ScreenshotResult result) {
+                    Bitmap software = copyScreenshot(result);
+                    if (software == null) {
+                        main.post(() -> finishScreenshotFailure(
+                                requestId, nodeReport, targetPackage, windowId, capturedEpoch,
+                                -1, startedAt));
+                        return;
+                    }
+
+                    CaptureJob job = new CaptureJob(
+                            requestId, targetPackage, windowId, capturedEpoch, software);
+                    synchronized (lifecycleLock) {
+                        if (destroyed) {
+                            discardJob(job);
+                            return;
+                        }
+                        inFlightJob = job;
+                    }
+                    main.post(() -> showPreviewIfCurrent(job, nodeReport, startedAt));
+                    startOcr(job, startedAt);
                 }
-                CaptureJob job = new CaptureJob(requestId, software);
-                main.post(() -> showPreviewIfCurrent(job, nodeReport, targetPackage, windowId, startedAt));
-                try {
-                    recognizer.process(InputImage.fromBitmap(software, 0))
-                            .addOnSuccessListener(text -> finishOcr(job, text, startedAt))
-                            .addOnFailureListener(error -> finishOcrError(job, error, startedAt));
-                } catch (RuntimeException error) {
-                    finishOcrError(job, error, startedAt);
-                }
-            }
             });
         } catch (RuntimeException error) {
-            finishScreenshotFailure(requestId, nodeReport, -2, startedAt);
+            main.post(() -> finishScreenshotFailure(
+                    requestId, nodeReport, targetPackage, windowId, capturedEpoch,
+                    -2, startedAt));
+        }
+    }
+
+    private void startOcr(CaptureJob job, long startedAt) {
+        synchronized (lifecycleLock) {
+            if (destroyed || recognizerClosed) {
+                discardJob(job);
+                return;
+            }
+            try {
+                recognizer.process(InputImage.fromBitmap(job.bitmap, 0))
+                        .addOnSuccessListener(text -> finishOcr(job, text, startedAt))
+                        .addOnFailureListener(error -> finishOcrError(job, error, startedAt));
+            } catch (RuntimeException error) {
+                finishOcrError(job, error, startedAt);
+            }
         }
     }
 
     private Bitmap copyScreenshot(ScreenshotResult result) {
+        if (result == null || result.getHardwareBuffer() == null) return null;
         HardwareBuffer buffer = result.getHardwareBuffer();
         Bitmap wrapped = null;
         try {
@@ -229,96 +350,171 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void showPreviewIfCurrent(CaptureJob job, NodeReport report, String packageName,
-                                      int windowId, long startedAt) {
-        if (!isCurrent(job.requestId) || !isAllowedPackage(foregroundApplicationPackage())) {
+    private void showPreviewIfCurrent(CaptureJob job, NodeReport report, long startedAt) {
+        if (!isCurrentPage(job) || !requestGate.isCurrent(job.requestId)) {
             job.detachPreview();
             return;
         }
-        previewJob = job;
-        preview = new LinearLayout(this);
-        preview.setOrientation(LinearLayout.VERTICAL);
-        preview.setPadding(dp(12), dp(12), dp(12), dp(12));
-        preview.setBackgroundColor(Color.WHITE);
+        removePreview();
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+        card.setBackgroundColor(Color.WHITE);
+        card.setContentDescription("probe_result_card");
 
-        LinearLayout header = new LinearLayout(this);
-        TextView title = new TextView(this);
-        title.setText(String.format(Locale.ROOT, "截图成功 · %d×%d", job.bitmap.getWidth(), job.bitmap.getHeight()));
-        title.setTextColor(Color.BLACK);
-        header.addView(title, new LinearLayout.LayoutParams(0, WindowManager.LayoutParams.WRAP_CONTENT, 1f));
-        Button close = new Button(this);
-        close.setText("关闭");
-        close.setOnClickListener(v -> removePreview());
-        header.addView(close);
-        preview.addView(header);
+        WindowManager.LayoutParams params = overlayParams(cardWidth(),
+                WindowManager.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
+        params.x = Math.max(0, (getResources().getDisplayMetrics().widthPixels - params.width) / 2);
+        params.y = dp(36);
+        addHeader(card, "截图成功 · " + job.bitmap.getWidth() + "×" + job.bitmap.getHeight(),
+                this::removePreview, params);
 
         ImageView image = new ImageView(this);
         image.setImageBitmap(job.bitmap);
         image.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        preview.addView(image, new LinearLayout.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, dp(260)));
+        card.addView(image, new LinearLayout.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, previewImageHeight()));
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
         TextView nodeLabel = new TextView(this);
-        nodeLabel.setText(String.format(Locale.ROOT, "无障碍节点\n%s", report.displayText()));
+        nodeLabel.setText(getString(R.string.probe_nodes_result, report.displayText()));
         nodeLabel.setTextColor(Color.BLACK);
         results.addView(nodeLabel);
         ocrLabel = new TextView(this);
-        ocrLabel.setText("\n日文 OCR\n处理中…");
+        ocrLabel.setText(R.string.probe_ocr_processing);
         ocrLabel.setTextColor(Color.BLACK);
         results.addView(ocrLabel);
         TextView metadata = new TextView(this);
-        metadata.setText(String.format(Locale.ROOT,
-                "\n诊断：包=%s  window=%d  节点=%d  文本块=%d  截图耗时=%dms",
-                packageName, windowId, report.visitedNodes, report.textBlocks,
-                SystemClock.elapsedRealtime() - startedAt));
+        metadata.setText(metadataText("截图+节点", job.packageName, job.windowId,
+                report, startedAt, null));
         metadata.setTextColor(Color.DKGRAY);
         results.addView(metadata);
         scroll.addView(results);
-        preview.addView(scroll, new LinearLayout.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, dp(260)));
+        card.addView(scroll, new LinearLayout.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, resultHeight()));
 
-        int width = Math.min(getResources().getDisplayMetrics().widthPixels - dp(24), dp(420));
-        WindowManager.LayoutParams params = overlayParams(width,
-                WindowManager.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
-        params.x = Math.max(0, (getResources().getDisplayMetrics().widthPixels - width) / 2);
-        params.y = dp(36);
-        enableDrag(header, params, null);
-        windowManager.addView(preview, params);
+        preview = card;
+        previewJob = job;
+        try {
+            windowManager.addView(card, params);
+        } catch (RuntimeException error) {
+            preview = null;
+            previewJob = null;
+            ocrLabel = null;
+            job.detachPreview();
+        }
     }
 
-    private void finishScreenshotFailure(long requestId, NodeReport report, int errorCode, long startedAt) {
-        if (!isCurrent(requestId)) return;
-        requestGate.complete(requestId);
-        toast(String.format(Locale.ROOT, "截图失败 code=%d，节点块=%d，耗时=%dms",
-                errorCode, report.textBlocks, SystemClock.elapsedRealtime() - startedAt));
+    private void finishScreenshotFailure(long requestId, NodeReport report, String packageName,
+                                         int windowId, long epoch, int errorCode, long startedAt) {
+        boolean valid = !destroyed && requestGate.isCurrent(requestId)
+                && isCurrentPage(packageName, windowId, epoch);
+        requestGate.finishPhysical(requestId);
+        maybeShutdown();
+        if (!valid) return;
+        showFailurePreview(report, packageName, windowId, epoch, errorCode, startedAt);
+    }
+
+    private void showFailurePreview(NodeReport report, String packageName, int windowId,
+                                    long epoch, int errorCode, long startedAt) {
+        if (destroyed || !isCurrentPage(packageName, windowId, epoch)) return;
+        removePreview();
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+        card.setBackgroundColor(Color.WHITE);
+        card.setContentDescription("probe_result_card");
+
+        WindowManager.LayoutParams params = overlayParams(cardWidth(),
+                WindowManager.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
+        params.x = Math.max(0, (getResources().getDisplayMetrics().widthPixels - params.width) / 2);
+        params.y = dp(36);
+        addHeader(card, "截图失败 · code=" + errorCode, this::removePreview, params);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout results = new LinearLayout(this);
+        results.setOrientation(LinearLayout.VERTICAL);
+        TextView nodeLabel = new TextView(this);
+        nodeLabel.setText(getString(R.string.probe_nodes_failure, report.displayText()));
+        nodeLabel.setTextColor(Color.BLACK);
+        results.addView(nodeLabel);
+        TextView metadata = new TextView(this);
+        metadata.setText(metadataText("仅无障碍节点", packageName, windowId,
+                report, startedAt, "截图错误码=" + errorCode));
+        metadata.setTextColor(Color.DKGRAY);
+        results.addView(metadata);
+        scroll.addView(results);
+        card.addView(scroll, new LinearLayout.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, resultHeight()));
+
+        preview = card;
+        previewJob = null;
+        ocrLabel = null;
+        try {
+            windowManager.addView(card, params);
+        } catch (RuntimeException error) {
+            preview = null;
+        }
     }
 
     private void finishOcr(CaptureJob job, Text text, long startedAt) {
+        job.finishPhysical();
+        requestGate.finishPhysical(job.requestId);
+        maybeShutdown();
         main.post(() -> {
-            if (isCurrent(job.requestId)) {
-                requestGate.complete(job.requestId);
-                if (ocrLabel != null && previewJob == job) {
-                    String value = text.getText().isBlank() ? "（空）" : text.getText();
-                    ocrLabel.setText(String.format(Locale.ROOT, "\n日文 OCR\n%s\nOCR 总耗时=%dms",
-                            value, SystemClock.elapsedRealtime() - startedAt));
-                }
-            }
-            job.finishOcr();
+            if (destroyed || previewJob != job || !isCurrentPage(job)) return;
+            String value = formatOcr(text);
+            ocrLabel.setText(getString(R.string.probe_ocr_result, value,
+                    SystemClock.elapsedRealtime() - startedAt));
         });
     }
 
     private void finishOcrError(CaptureJob job, Exception error, long startedAt) {
+        job.finishPhysical();
+        requestGate.finishPhysical(job.requestId);
+        maybeShutdown();
         main.post(() -> {
-            if (isCurrent(job.requestId)) {
-                requestGate.complete(job.requestId);
-                if (ocrLabel != null && previewJob == job) {
-                    ocrLabel.setText(String.format(Locale.ROOT, "\n日文 OCR 失败：%s（%dms）",
-                            error.getClass().getSimpleName(), SystemClock.elapsedRealtime() - startedAt));
-                }
-            }
-            job.finishOcr();
+            if (destroyed || previewJob != job || !isCurrentPage(job)) return;
+            ocrLabel.setText(getString(R.string.probe_ocr_failure,
+                    error.getClass().getSimpleName(),
+                    SystemClock.elapsedRealtime() - startedAt));
         });
+    }
+
+    private String formatOcr(Text text) {
+        if (text == null || text.getText() == null || text.getText().isBlank()) {
+            return "（未识别到文字）";
+        }
+        StringBuilder output = new StringBuilder();
+        int blockIndex = 0;
+        for (Text.TextBlock block : text.getTextBlocks()) {
+            blockIndex++;
+            List<Text.Line> lines = block.getLines();
+            if (lines == null || lines.isEmpty()) {
+                output.append("[块").append(blockIndex).append(' ')
+                        .append(formatBounds(block.getBoundingBox())).append("] ")
+                        .append(block.getText()).append('\n');
+                continue;
+            }
+            for (Text.Line line : lines) {
+                output.append("[块").append(blockIndex).append(' ')
+                        .append(formatBounds(line.getBoundingBox())).append("] ")
+                        .append(line.getText()).append('\n');
+            }
+        }
+        return output.length() == 0 ? text.getText() : output.toString().trim();
+    }
+
+    private String metadataText(String source, String packageName, int windowId,
+                                NodeReport report, long startedAt, String error) {
+        String suffix = error == null ? "" : " · " + error;
+        return String.format(Locale.ROOT,
+                "\n诊断：来源=%s · 包=%s · windowId=%d · pageEpoch=%d · 节点=%d · 文本块=%d"
+                        + " · 总耗时=%dms%s",
+                source, packageName, windowId, pageEpoch, report.visitedNodes,
+                report.textBlocks, SystemClock.elapsedRealtime() - startedAt, suffix);
     }
 
     private NodeReport collectNodes(AccessibilityNodeInfo root) {
@@ -327,8 +523,13 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         return report;
     }
 
-    private void collectNode(AccessibilityNodeInfo node, NodeReport report, Set<String> seenAtPosition, int depth) {
-        if (node == null || depth > MAX_NODE_DEPTH || report.visitedNodes >= MAX_VISITED_NODES) return;
+    private void collectNode(AccessibilityNodeInfo node, NodeReport report,
+                              Set<String> seenAtPosition, int depth) {
+        if (node == null) return;
+        if (depth > MAX_NODE_DEPTH || report.visitedNodes >= MAX_VISITED_NODES) {
+            report.truncated = true;
+            return;
+        }
         report.visitedNodes++;
         if (!node.isVisibleToUser()) return;
         Rect bounds = new Rect();
@@ -338,13 +539,15 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         for (int index = 0; index < node.getChildCount(); index++) {
             AccessibilityNodeInfo child = node.getChild(index);
             if (child != null) collectNode(child, report, seenAtPosition, depth + 1);
+            if (report.truncated) return;
         }
     }
 
     private void appendNodeValue(CharSequence value, Rect bounds, NodeReport report,
                                  Set<String> seenAtPosition, String source) {
         if (value == null || value.toString().isBlank()) return;
-        String key = ProbeLogic.positionKey(value.toString(), bounds.left, bounds.top, bounds.right, bounds.bottom);
+        String key = ProbeLogic.positionKey(value.toString(),
+                bounds.left, bounds.top, bounds.right, bounds.bottom);
         if (!seenAtPosition.add(key)) return;
         report.textBlocks++;
         report.output.append('[').append(source).append(' ')
@@ -352,17 +555,50 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 .append(value).append('\n');
     }
 
-    private boolean isCurrent(long requestId) {
-        return !destroyed && requestGate.isCurrent(requestId);
+    private boolean isCurrentPage(CaptureJob job) {
+        return isCurrentPage(job.packageName, job.windowId, job.pageEpoch);
     }
 
-    private boolean isLocked() {
-        return keyguardManager != null && keyguardManager.isDeviceLocked();
+    private boolean isCurrentPage(String packageName, int windowId, long epoch) {
+        if (destroyed || isLocked() || !isAllowedPackage(packageName)) return false;
+        WindowSnapshot active = activeApplication();
+        return active != null && ProbeLogic.resultAllowed(
+                packageName, windowId, epoch,
+                active.packageName, active.windowId, pageEpoch, isLocked());
     }
 
-    private void invalidateAndClear() {
+    private boolean isPreviewScrollEvent(AccessibilityEvent event) {
+        if (preview == null || !getPackageName().equals(String.valueOf(event.getPackageName()))
+                || event.getEventType() != AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            return false;
+        }
+        AccessibilityNodeInfo source = event.getSource();
+        if (source == null) return true;
+        try {
+            Rect sourceBounds = new Rect();
+            source.getBoundsInScreen(sourceBounds);
+            Rect cardBounds = new Rect();
+            preview.getGlobalVisibleRect(cardBounds);
+            return ProbeLogic.isOverlayScrollEvent(true, true,
+                    Rect.intersects(sourceBounds, cardBounds));
+        } finally {
+            source.recycle();
+        }
+    }
+
+    private boolean isPageEvent(int eventType) {
+        return eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                || eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                || eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED;
+    }
+
+    private void invalidateAndClear(boolean removeTrigger) {
         requestGate.invalidate();
+        pageEpoch++;
         removePreview();
+        if (removeTrigger) removeTrigger();
+        maybeShutdown();
     }
 
     private void removePreview() {
@@ -373,17 +609,34 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         previewJob = null;
     }
 
+    private void addHeader(LinearLayout card, String title, Runnable closeAction,
+                           WindowManager.LayoutParams params) {
+        LinearLayout header = new LinearLayout(this);
+        TextView titleView = new TextView(this);
+        titleView.setText(title);
+        titleView.setTextColor(Color.BLACK);
+        header.addView(titleView, new LinearLayout.LayoutParams(
+                0, WindowManager.LayoutParams.WRAP_CONTENT, 1f));
+        Button close = new Button(this);
+        close.setText("关闭");
+        close.setOnClickListener(v -> closeAction.run());
+        header.addView(close);
+        card.addView(header);
+        enableDrag(header, card, params, null);
+    }
+
     private WindowManager.LayoutParams overlayParams(int width, int height, int gravity) {
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                 width, height, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         params.gravity = gravity;
         return params;
     }
 
-    private void enableDrag(View handle, WindowManager.LayoutParams params, Runnable clickAction) {
+    private void enableDrag(View handle, View owner, WindowManager.LayoutParams params,
+                            Runnable clickAction) {
         if (clickAction != null) handle.setOnClickListener(view -> clickAction.run());
         handle.setOnTouchListener(new View.OnTouchListener() {
             float downX;
@@ -409,8 +662,11 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                     int maxY = Math.max(0, getResources().getDisplayMetrics().heightPixels - dp(48));
                     params.x = Math.max(0, Math.min(maxX, startX + dx));
                     params.y = Math.max(0, Math.min(maxY, startY + dy));
-                    try { windowManager.updateViewLayout(clickAction == null ? preview : trigger, params); }
-                    catch (IllegalArgumentException ignored) { }
+                    try {
+                        windowManager.updateViewLayout(owner, params);
+                    } catch (IllegalArgumentException ignored) {
+                        // The close/screen lifecycle may remove the owner concurrently.
+                    }
                     return true;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP) {
@@ -423,7 +679,51 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void safeRemove(View view) {
-        try { windowManager.removeView(view); } catch (IllegalArgumentException ignored) { }
+        try {
+            windowManager.removeView(view);
+        } catch (IllegalArgumentException ignored) {
+            // It was already removed by the window lifecycle.
+        }
+    }
+
+    private void maybeShutdown() {
+        synchronized (lifecycleLock) {
+            if (destroyed && !requestGate.isBusy() && !recognizerClosed) {
+                recognizer.close();
+                recognizerClosed = true;
+                screenshotExecutor.shutdown();
+            }
+        }
+    }
+
+    private void discardJob(CaptureJob job) {
+        job.detachPreview();
+        job.finishPhysical();
+        requestGate.finishPhysical(job.requestId);
+        maybeShutdown();
+    }
+
+    private int cardWidth() {
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        return Math.max(dp(260), Math.min(screenWidth - dp(24), dp(420)));
+    }
+
+    private int previewImageHeight() {
+        int available = getResources().getDisplayMetrics().heightPixels;
+        return Math.max(dp(120), Math.min(dp(240), Math.round(available * 0.28f)));
+    }
+
+    private int resultHeight() {
+        int available = getResources().getDisplayMetrics().heightPixels;
+        return Math.max(dp(180), Math.min(dp(460), Math.round(available * 0.42f)));
+    }
+
+    private String formatBounds(Rect bounds) {
+        return bounds == null ? "无边界" : bounds.flattenToString();
+    }
+
+    private boolean isLocked() {
+        return keyguardManager != null && keyguardManager.isDeviceLocked();
     }
 
     private int dp(int value) {
@@ -435,53 +735,72 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onDestroy() {
-        destroyed = true;
-        invalidateAndClear();
-        removeTrigger();
+        synchronized (lifecycleLock) {
+            destroyed = true;
+            pageEpoch++;
+            requestGate.invalidate();
+        }
+        invalidateAndClear(true);
+        synchronized (lifecycleLock) {
+            if (inFlightJob != null) {
+                inFlightJob.detachPreview();
+                inFlightJob = null;
+            }
+        }
         if (receiverRegistered) unregisterReceiver(screenReceiver);
         receiverRegistered = false;
-        recognizer.close();
-        screenshotExecutor.shutdownNow();
+        maybeShutdown();
         super.onDestroy();
+    }
+
+    private static final class WindowSnapshot {
+        final String packageName;
+        final int windowId;
+
+        WindowSnapshot(String packageName, int windowId) {
+            this.packageName = packageName;
+            this.windowId = windowId;
+        }
     }
 
     private static final class NodeReport {
         final StringBuilder output = new StringBuilder();
         int visitedNodes;
         int textBlocks;
+        boolean truncated;
 
         String displayText() {
-            return output.length() == 0 ? "（没有可见文本节点）" : output.toString().trim();
+            String value = output.length() == 0 ? "（没有可见文字节点）" : output.toString().trim();
+            return truncated ? value + "\n[节点遍历达到深度或数量上限，结果可能截断]" : value;
         }
     }
 
     private static final class CaptureJob {
         final long requestId;
+        final String packageName;
+        final int windowId;
+        final long pageEpoch;
         final Bitmap bitmap;
-        private boolean previewAttached = true;
-        private boolean ocrFinished;
-        private boolean recycled;
+        private final ProbeLogic.ResourceLease resourceLease;
 
-        CaptureJob(long requestId, Bitmap bitmap) {
+        CaptureJob(long requestId, String packageName, int windowId,
+                   long pageEpoch, Bitmap bitmap) {
             this.requestId = requestId;
+            this.packageName = packageName;
+            this.windowId = windowId;
+            this.pageEpoch = pageEpoch;
             this.bitmap = bitmap;
+            this.resourceLease = new ProbeLogic.ResourceLease(() -> {
+                if (!bitmap.isRecycled()) bitmap.recycle();
+            });
         }
 
-        synchronized void detachPreview() {
-            previewAttached = false;
-            releaseIfUnused();
+        void detachPreview() {
+            resourceLease.detachPreview();
         }
 
-        synchronized void finishOcr() {
-            ocrFinished = true;
-            releaseIfUnused();
-        }
-
-        private void releaseIfUnused() {
-            if (!recycled && !previewAttached && ocrFinished) {
-                bitmap.recycle();
-                recycled = true;
-            }
+        void finishPhysical() {
+            resourceLease.finishPhysical();
         }
     }
 }

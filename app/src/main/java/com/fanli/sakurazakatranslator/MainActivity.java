@@ -10,6 +10,7 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -41,6 +42,17 @@ public final class MainActivity extends Activity {
             Toast.makeText(this, "目标包名已保存；切换页面后生效", Toast.LENGTH_SHORT).show();
         });
         root.addView(save);
+
+        CheckBox syntheticMode = new CheckBox(this);
+        syntheticMode.setText("启用本页合成测试（仅当前测试页显示探针）");
+        syntheticMode.setChecked(ProbePreferences.syntheticMode(this));
+        syntheticMode.setOnCheckedChangeListener((button, checked) -> {
+            ProbePreferences.saveSyntheticMode(this, checked);
+            Toast.makeText(this, checked ? "合成测试已开启" : "合成测试已关闭",
+                    Toast.LENGTH_SHORT).show();
+        });
+        root.addView(syntheticMode);
+        root.addView(text("关闭合成测试后，助手只响应已保存且当前位于前台的目标包名。目标包名必须先在设备上确认，再手动保存。", 14));
 
         Button settings = new Button(this);
         settings.setText(getString(R.string.open_accessibility_settings));

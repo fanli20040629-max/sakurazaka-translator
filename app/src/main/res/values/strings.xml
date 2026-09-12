@@ -2,4 +2,9 @@
     <string name="app_name">櫻坂翻译助手</string>
     <string name="open_accessibility_settings">打开无障碍设置</string>
     <string name="accessibility_service_description">读取用户指定应用的当前窗口文本，并在用户点击后进行本地截图和日文 OCR。</string>
+    <string name="probe_nodes_result">无障碍节点（来源与边界）\n%1$s</string>
+    <string name="probe_nodes_failure">无障碍节点（截图不可用，仍可核对）\n%1$s</string>
+    <string name="probe_ocr_processing">\n日文 OCR\n处理中…</string>
+    <string name="probe_ocr_result">\n日文 OCR\n%1$s\nOCR 总耗时=%2$dms</string>
+    <string name="probe_ocr_failure">\n日文 OCR 失败：%1$s\nOCR 耗时=%2$dms</string>
 </resources>

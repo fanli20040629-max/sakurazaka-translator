@@ -10,7 +10,7 @@
 
 - 项目目录：`D:\Projects\sakurazaka-translator`
 - 现有方案：`sakurazaka_cli_development_plan.md`；第 21～28 节为唯一执行入口，已完成 2026-09-12 复核修订。
-- Android 源码工程骨架已建立；Git 仓库尚未初始化。
+- Android 源码工程及本地 Git 仓库已建立；代码检查点 `30f00b1`，验证记录检查点 `5d07979`。
 
 ## 环境配置检查点
 
@@ -42,7 +42,22 @@
 
 ## 当前未完成与下一步
 
-1. 当前为 R1～R5 已实现的修复版探针，P0.5 仍未通过真机验收；最新恢复入口为方案第 28.5 节。
+开发代理交接指令：`docs/DEVELOPMENT_HANDOFF.md`。先按该文档读取和核实当前代码，再实施第 28.7 节 A1～A5；交接文档新增不代表修复已完成。
+
+1. 当前为已构建且通过静态检查的探针，P0.5 未通过；最新执行入口为方案第 28.7 节。此前“R1～R5 已全部实现、只差手机”的描述过强，须先完成 A 阶段收尾。
 2. 已通过 `ProbeLogicSelfTest`、Wrapper `assembleDebug`、`lintDebug`（0 error、1 个锁定版本提示）和 APK 最终权限/OCR 组件检查；APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。
-3. ADB 当前无设备；安装、无障碍授权、合成自测、实际截图、OCR 字级质量和正文验收均待验证。
-4. 连接设备后先完成合成自测，再测试目标 App 四类页面；至少一条正文路径满足门槛后，按 P1/P2/P3 推进翻译，P4 再做扩展验收。
+3. A 阶段待实施：取消与物理任务占用分离、销毁/迟到回调清理、页面身份和锁屏清理、显式合成模式、截图失败节点展示及完整诊断 UI。当前逻辑自测未覆盖这些全部行为。
+4. 上次 ADB 无设备；A 完成后生成新包，B 完成安装及合成自测，C 核对目标 App 四类页面。运行截图、OCR 字级质量和正文验收均待验证。
+5. C 门槛通过后实施 D（P1/P2/P3 正文整理和翻译），E（P4）再做扩展验收。具体预期结果和失败处理见第 28.7 节。
+
+## 2026-09-12 A1～A5 实际实施检查点
+
+- A1 已实现：逻辑失效与物理截图/OCR 占用分离；失效后立即拒绝旧结果，物理完成前拒绝新采集，迟到回调不能解除新任务占用。
+- A2 已实现：HardwareBuffer 统一关闭；Bitmap 由生产 `ResourceLease` 管理，OCR 完成且预览解绑后恰好释放一次；服务销毁后不再启动 OCR 或添加悬浮窗，识别器延迟到在途任务完成后关闭。
+- A3 已实现：结果使用 requestId、pageEpoch、包名和 windowId 校验；前台切换、同包页面事件、锁屏、中断会使旧结果失效；卡片内部滚动事件单独识别。
+- A4 已实现：合成页必须由用户勾选“启用本页合成测试”后才允许显示探针；目标包只接受用户保存的前台包名，不回退到任意窗口。
+- A5 已实现：截图失败展示可滚动节点正文和错误码；节点/OCR 均显示来源、边界、耗时；节点遍历上限会提示截断；卡片可滚动、拖动和关闭。
+- 已运行：`verify-probe-logic.ps1`（PASS，覆盖取消重点击、旧回调、销毁/迟到截图模型、OCR 三种结束路径、锁屏/页面身份、卡片滚动和资源单次释放）；`:app:lintDebug`（0 error、1 个 Gradle 版本提示）；`:app:assembleDebug`（成功）；`git diff --check`（无差异错误）。
+- 最新 APK：`D:\Projects\sakurazaka-translator\app\build\outputs\apk\debug\app-debug.apk`，versionName `0.1.0-probe`，versionCode `1`，大小 `53,683,519` 字节，SHA-256 `992C3BFE7B9243B4BDA3BFFDD1B19530782858D810D1AC8426FB12DFE6424140`。
+- 静态 APK 检查：包名 `com.fanli.sakurazakatranslator`；仅有应用自身动态接收器权限；无 `INTERNET`、无 `ACCESS_NETWORK_STATE`；签名 v2 verified；包含 `libmlkit_google_ocr_pipeline.so` 和 `Jpan_ctc` 模型资源。
+- 尚未验证：ADB 当前无设备；安装、无障碍授权、真实截图、OCR 正文质量、合成真机验收和目标 App 四类页面均未完成。P0.5 仍不可宣称通过。
