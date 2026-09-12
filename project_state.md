@@ -59,5 +59,11 @@
 - A5 已实现：截图失败展示可滚动节点正文和错误码；节点/OCR 均显示来源、边界、耗时；节点遍历上限会提示截断；卡片可滚动、拖动和关闭。
 - 已运行：`verify-probe-logic.ps1`（PASS，覆盖取消重点击、旧回调、销毁/迟到截图模型、OCR 三种结束路径、锁屏/页面身份、卡片滚动和资源单次释放）；`:app:lintDebug`（0 error、1 个 Gradle 版本提示）；`:app:assembleDebug`（成功）；`git diff --check`（无差异错误）。
 - 最新 APK：`D:\Projects\sakurazaka-translator\app\build\outputs\apk\debug\app-debug.apk`，versionName `0.1.0-probe`，versionCode `1`，大小 `53,683,519` 字节，SHA-256 `1B8C9B66EFE45189B05E382DFE54E2A7839D3C250B39E81062034B4E1A676799`。本次复测进一步过滤探针自身 `TYPE_WINDOW_STATE_CHANGED`，避免结果卡片被自身窗口事件立即清除；同时保留普通内容变化、悬浮窗窗口集合过滤和 Bitmap 引用先解除修复。
+
+### 合成页真机复测反馈
+
+- 已确认结果卡片稳定，可滑动并自主关闭；截图显示当前合成页，尺寸为 `1080×2340`。
+- OCR 已识别图片内两句日文：`画像内だけの日本語です。`、`OCR で二行目も確認します。`。
+- 中日混排页面中，日文模型对中文控件文本存在误识别；因此当前结论是截图通过、图片日文 OCR 通过、混排正文质量未完全通过，P0.5 尚不能整体宣称通过。
 - 静态 APK 检查：包名 `com.fanli.sakurazakatranslator`；仅有应用自身动态接收器权限；无 `INTERNET`、无 `ACCESS_NETWORK_STATE`；签名 v2 verified；包含 `libmlkit_google_ocr_pipeline.so` 和 `Jpan_ctc` 模型资源。
 - 尚未验证：ADB 当前无设备；安装、无障碍授权、真实截图、OCR 正文质量、合成真机验收和目标 App 四类页面均未完成。P0.5 仍不可宣称通过。
