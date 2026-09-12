@@ -59,6 +59,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     private KeyguardManager keyguardManager;
     private Button trigger;
     private LinearLayout preview;
+    private ImageView previewImage;
     private TextView ocrLabel;
     private CaptureJob previewJob;
     private CaptureJob inFlightJob;
@@ -372,6 +373,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         ImageView image = new ImageView(this);
         image.setImageBitmap(job.bitmap);
         image.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        previewImage = image;
         card.addView(image, new LinearLayout.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT, previewImageHeight()));
 
@@ -402,6 +404,10 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         } catch (RuntimeException error) {
             preview = null;
             previewJob = null;
+            if (previewImage != null) {
+                previewImage.setImageDrawable(null);
+                previewImage = null;
+            }
             ocrLabel = null;
             job.detachPreview();
         }
@@ -588,8 +594,6 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private boolean isPageEvent(int eventType) {
         return eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                || eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-                || eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
                 || eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED;
     }
 
@@ -602,6 +606,10 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void removePreview() {
+        if (previewImage != null) {
+            previewImage.setImageDrawable(null);
+            previewImage = null;
+        }
         if (preview != null && windowManager != null) safeRemove(preview);
         preview = null;
         ocrLabel = null;
