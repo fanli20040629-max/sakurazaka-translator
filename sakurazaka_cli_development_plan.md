@@ -1057,5 +1057,6 @@ adb devices -l
 - 最终 APK：`D:\Projects\sakurazaka-translator\app\build\outputs\apk\debug\app-debug.apk`；53,681,339 字节；SHA-256：`FBCE49974E826F80E6EF915C4DFAD9474E1D6120400F3CB6387033784DA847DD`。
 - APK 静态检查确认包含 `libmlkit_google_ocr_pipeline`；权限只包含应用自身动态接收器权限，未包含 INTERNET 或 ACCESS_NETWORK_STATE。
 - ADB 设备列表仍为空。编译、静态检查和 APK 生成已完成；安装成功、实际截图、合成正文/OCR验收和目标 App 四类页面验收仍需手机。
+- 已建立本地 Git 根提交 `30f00b1 feat: add verified accessibility capture probe`；未推送远程。后续可从该提交恢复代码修复状态。
 
 下一步不再重复下载或修复 lint。连接手机并授权 USB 调试后安装上述 APK，开启无障碍服务，在内置合成页点击“取字探针”。合成页必须核对：两条相同文本均保留、节点不包含图片内文字、OCR能读取图片文字、截图预览对应当前页、连续点击受控、卡片可拖动/滚动/关闭、离开页面及锁屏后结果清除。通过后再确认目标 App 包名并执行四类页面测试。
