@@ -1,0 +1,12 @@
+.gradle/
+.gradle-home/
+.wrapper-extract/
+local.properties
+build/
+**/build/
+.idea/
+*.iml
+captures/
+*.log
+debug.keystore
+.verification/

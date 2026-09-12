@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">櫻坂翻译助手</string>
+    <string name="open_accessibility_settings">打开无障碍设置</string>
+    <string name="accessibility_service_description">读取用户指定应用的当前窗口文本，并在用户点击后进行本地截图和日文 OCR。</string>
+</resources>
