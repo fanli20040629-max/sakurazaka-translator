@@ -1,6 +1,6 @@
 # 探针收尾开发交接指令
 
-> 2026-09-12 更新：本文件以下正文为旧 A1～A5 交接，保留安全、生命周期及验收约束。当前正文优化执行入口已转为 [PROBE_TEXT_OPTIMIZATION_HANDOFF.md](PROBE_TEXT_OPTIMIZATION_HANDOFF.md) 的 M0～M5。先读 project_state.md 和新交接，再将本文件作为约束参考；不要按旧状态重复实施或宣称全部通过。
+> 2026-09-13 更新：本文件以下为旧 A1～A5 交接。当前入口为 [PROBE_TEXT_OPTIMIZATION_HANDOFF.md](PROBE_TEXT_OPTIMIZATION_HANDOFF.md) 版本 2.0（M0～M5、T01～T25），对应主方案 28.11。先读 project_state 和新方案；旧回收要求、测试覆盖、工期和历史状态以新方案的明确修订为准，安全与正文验收边界继续保留。
 
 适用于接手本项目的开发代理，包括用户指定的 GPT‑5.6。以下正文可直接作为开发指令。质量以实现与验证证据判断，不因模型名称或遵循提示词而自动保证。
 

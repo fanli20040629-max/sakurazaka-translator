@@ -1,5 +1,16 @@
 # 技术决策
 
+## 2026-09-13：正文整理版方案 2.0（待实施）
+
+- 执行入口统一为 [PROBE_TEXT_OPTIMIZATION_HANDOFF.md](PROBE_TEXT_OPTIMIZATION_HANDOFF.md)。先完成协调器和结构节点，再分类、OCR 对照、UI 与完整验证；测试从 M1 同步推进。
+- Tasks 取消不触发失败监听，采用非 Activity 绑定的唯一完成入口处理成功/失败/取消，另处理同步启动异常；这是根据 [Task 官方文档](https://developers.google.com/android/reference/com/google/android/gms/tasks/Task) 对旧方案的修订，尚未改代码。
+- Android 33 起节点 recycle 无实际作用。按 [节点官方文档](https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo) 管理短期引用，保存屏幕/窗口坐标类别；不再以补 recycle 次数作为修复目标。
+- SDK 36 没有公开 View.getAccessibilityWindowId()。候选方案为 attach 后从自有 View 的节点获取窗口 ID 并核对 overlay 类型，真机行为待验证；不调用隐藏 API。
+- 无结构证据使用可见 UNKNOWN 和手选；无坐标/归属证据保留独立 OCR 候选并关闭自动融合。手动回退与自动正文验收分开。
+- 复用 Java 17、单模块、原生 View、锁定依赖、现有调试签名；不开发翻译/API Key/缓存，不新增后台正文采集。
+
+下方为历史决策及当时证据；“真机证据尚不存在”等旧描述不覆盖当前证据汇总。
+
 ## 2026-09-12：先做取字探针
 
 目标 App 的正文节点、自绘方式、Android 16 敏感数据保护和安全截图状态尚未实测。探针先提供最小悬浮触发、节点读取、指定窗口截图和日文 OCR，避免在核心路径未确认前投入翻译和复杂 UI。
