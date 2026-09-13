@@ -2,14 +2,15 @@
 
 更新时间：2026-09-13
 
-## 最新状态：方案 2.0 已完成核对，生产优化待实施
+## 最新状态：M1 生产结构与协调器正在实施
 
 - 当前入口：[PROBE_TEXT_OPTIMIZATION_HANDOFF.md](PROBE_TEXT_OPTIMIZATION_HANDOFF.md) 版本 2.0；主方案 28.11；按 M0～M5 开发，T01～T25 分层验证。
 - 已证实旧包可安装/启动、卡片稳定且可滚动关闭、合成及部分目标页面可截图/OCR；目标节点保留了已观察样本的花、爱心和换行。
 - 仍需完成节点结构保真、正文整理、OCR 对照、精确页面失效及生产协调测试。P0.5 未通过，不进入翻译。
-- 本次已审查代码、查阅 Android/ML Kit 官方资料、核对公开 SDK API，复跑旧 ProbeLogicSelfTest 为 PASS，旧 APK 哈希匹配；未实现新测试、未改生产代码、未重跑 lint/构建、未操作手机。
-- D01～D04 优先：节点异常终止、OCR 取消完成监听、关闭与失效语义、页面事件身份；后续节点整理与 UI 依赖这些基础。旧 PASS 不等于生产生命周期全覆盖。
-- 前一文档恢复点 e90497b；新方案当前写入文件，不代表 M1～M5 完成。手机状态和目标结构样本仍需实测。
+- 本次已审查代码、查阅 Android/ML Kit 官方资料，并完成 M1 第一批代码：ProbeModels、TextAssembly、CaptureCoordinator；服务已接入结构节点采集、OCR 完成监听、节点异常终止、用户关闭失效和 overlay 窗口登记。
+- 扩展后的 verify-probe-logic.ps1 与 ProbeLogicSelfTest PASS；`:app:compileDebugJavaWithJavac --offline`、`:app:lintDebug`、`:app:assembleDebug` PASS。APK 静态检查 PASS：版本 `0.2.0-probe-text`/2，大小 `53,365,230` 字节，SHA-256 `A91A4E66C7A1140CBD165054C7C8D4710AE9F41CB8FBCB8B84EE84F11C4ED5FA`，v2 签名，未含 INTERNET/ACCESS_NETWORK_STATE，含日文 OCR 模型。ADB 当前无设备。
+- D01～D04 的第一批修复已落地，但内容变化事件、完整资源终止矩阵和真实 OCR Task 仍需继续测试；旧 PASS 不等于生产生命周期全覆盖。
+- 方案文档恢复点为 ee80f90；当前生产修改和产物记录尚未提交。下一步是手机安装、授权、合成页验证；M2～M5 和 P0.5 仍未完成。
 - 下方为历史记录，其中“未安装”“尚未实施”和测试覆盖声明不是当前结论；以最新入口中的证据边界为准。
 
 ## 历史状态

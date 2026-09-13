@@ -4,6 +4,8 @@
 
 本次未检查 ADB、未安装、未截图或执行手机用例。旧安装和视觉证据继续按下表保留，不能当作新版本验收。下一轮按 [方案 2.0](PROBE_TEXT_OPTIMIZATION_HANDOFF.md) 第 9 节：先 Android 适配与合成测试，再目标四类页面；T01～T25 的桌面、Android 适配、目标正文证据分开记录。缺长文/重复/截断样本保持待验证。
 
+补充：本轮已检查 ADB，当前无设备；已生成待真机复测 APK `D:\Projects\sakurazaka-translator\app\build\outputs\apk\debug\app-debug.apk`，版本 `0.2.0-probe-text`/2，SHA-256 `A91A4E66C7A1140CBD165054C7C8D4710AE9F41CB8FBCB8B84EE84F11C4ED5FA`。安装、授权、截图、节点正文、OCR 和目标页面仍待手机证据。
+
 ## 最新证据汇总（2026-09-12）
 
 来源是本次会话中的安装输出、用户操作反馈及截图，不保存原始订阅正文或设备序列号。

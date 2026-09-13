@@ -2,6 +2,8 @@ package com.fanli.sakurazakatranslator.capture;
 
 public final class ProbeLogicSelfTest {
     public static void main(String[] args) {
+        checkAssembly();
+        checkCoordinator();
         ProbeLogic.RequestGate gate = new ProbeLogic.RequestGate();
         long first = gate.begin();
         check(first > 0, "first request must start");
@@ -43,6 +45,44 @@ public final class ProbeLogicSelfTest {
         check(sameA.equals(sameB), "same text at same bounds must deduplicate");
         check(!sameA.equals(otherPosition), "same text at different bounds must remain");
         System.out.println("ProbeLogicSelfTest PASS");
+    }
+
+    private static void checkAssembly() {
+        java.util.List<com.fanli.sakurazakatranslator.capture.ProbeModels.NodeRecord> nodes =
+                new java.util.ArrayList<>();
+        com.fanli.sakurazakatranslator.capture.ProbeModels.Bounds first =
+                new com.fanli.sakurazakatranslator.capture.ProbeModels.Bounds(0, 10, 100, 40);
+        nodes.add(new com.fanli.sakurazakatranslator.capture.ProbeModels.NodeRecord(
+                "n1", null, 0, 0, 7, "花♡(笑)\n二行目", "花♡(笑)\n二行目",
+                "android.widget.TextView", null, first, first, true, false, false));
+        nodes.add(new com.fanli.sakurazakatranslator.capture.ProbeModels.NodeRecord(
+                "n2", null, 1, 1, 7, "同じ文", null, "android.widget.TextView", null,
+                new com.fanli.sakurazakatranslator.capture.ProbeModels.Bounds(0, 50, 100, 80),
+                null, true, false, false));
+        nodes.add(new com.fanli.sakurazakatranslator.capture.ProbeModels.NodeRecord(
+                "n3", null, 2, 2, 7, "同じ文", null, "android.widget.TextView", null,
+                new com.fanli.sakurazakatranslator.capture.ProbeModels.Bounds(0, 90, 100, 120),
+                null, true, false, false));
+        java.util.List<com.fanli.sakurazakatranslator.capture.ProbeModels.TextFragment> fragments =
+                com.fanli.sakurazakatranslator.capture.TextAssembly.fromNodes(nodes);
+        check(fragments.size() == 4, "assembly keeps conflicting source and positional repeats");
+        check(fragments.get(0).rawText.equals("花♡(笑)\n二行目"), "assembly preserves raw symbols and newline");
+        check(fragments.get(0).role == com.fanli.sakurazakatranslator.capture.ProbeModels.Role.BODY,
+                "ordinary text node is a body candidate");
+    }
+
+    private static void checkCoordinator() {
+        com.fanli.sakurazakatranslator.capture.CaptureCoordinator coordinator =
+                new com.fanli.sakurazakatranslator.capture.CaptureCoordinator();
+        long id = coordinator.begin();
+        check(id > 0 && coordinator.isBusy(), "coordinator starts node task");
+        check(coordinator.advance(id, com.fanli.sakurazakatranslator.capture.CaptureCoordinator.Physical.OCR),
+                "coordinator advances physical task");
+        coordinator.invalidate();
+        check(!coordinator.isCurrent(id) && coordinator.isBusy(), "invalid result keeps physical task busy");
+        check(coordinator.begin() == -1, "coordinator rejects overlap after invalidation");
+        coordinator.finishPhysical(id);
+        check(!coordinator.isBusy(), "coordinator releases after physical completion");
     }
 
     private static void check(boolean condition, String message) {

@@ -44,6 +44,8 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import static com.fanli.sakurazakatranslator.capture.ProbeModels.*;
+
 public final class TranslatorAccessibilityService extends AccessibilityService {
     private static final int MAX_NODE_DEPTH = 80;
     private static final int MAX_VISITED_NODES = 800;
@@ -69,6 +71,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     private long pageEpoch;
     private String foregroundPackage;
     private int foregroundWindowId = -1;
+    private int overlayWindowId = -1;
 
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -115,10 +118,14 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         if (isPageEvent(event.getEventType())) {
             WindowSnapshot active = activeApplication();
             updateForegroundIdentity(active);
-            if (active != null && eventPackage != null
+            boolean sameWindow = active != null && event.getWindowId() == active.windowId;
+            if (active != null && sameWindow && eventPackage != null
                     && eventPackage.equals(active.packageName)
                     && isAllowedPackage(eventPackage)) {
                 markPageChanged();
+            } else if (event.getWindowId() == overlayWindowId) {
+                refreshTriggerVisibility();
+                return;
             }
         }
         refreshTriggerVisibility();
@@ -287,6 +294,11 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         final NodeReport nodeReport;
         try {
             nodeReport = collectNodes(root);
+        } catch (RuntimeException error) {
+            requestGate.finishPhysical(requestId);
+            maybeShutdown();
+            toast("节点读取失败：" + error.getClass().getSimpleName());
+            return;
         } finally {
             root.recycle();
         }
@@ -336,8 +348,17 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             }
             try {
                 recognizer.process(InputImage.fromBitmap(job.bitmap, 0))
-                        .addOnSuccessListener(text -> finishOcr(job, text, startedAt))
-                        .addOnFailureListener(error -> finishOcrError(job, error, startedAt));
+                        .addOnCompleteListener(task -> {
+                            if (task.isCanceled()) {
+                                finishOcrCanceled(job, startedAt);
+                            } else if (task.isSuccessful()) {
+                                finishOcr(job, task.getResult(), startedAt);
+                            } else {
+                                Exception error = task.getException();
+                                finishOcrError(job, error == null
+                                        ? new IllegalStateException("OCR 任务失败") : error, startedAt);
+                            }
+                        });
             } catch (RuntimeException error) {
                 finishOcrError(job, error, startedAt);
             }
@@ -376,7 +397,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         params.x = Math.max(0, (getResources().getDisplayMetrics().widthPixels - params.width) / 2);
         params.y = dp(36);
         addHeader(card, "截图成功 · " + job.bitmap.getWidth() + "×" + job.bitmap.getHeight(),
-                this::removePreview, params);
+                this::closePreview, params);
 
         ImageView image = new ImageView(this);
         image.setImageBitmap(job.bitmap);
@@ -409,6 +430,8 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         previewJob = job;
         try {
             windowManager.addView(card, params);
+            AccessibilityNodeInfo cardNode = card.createAccessibilityNodeInfo();
+            overlayWindowId = cardNode == null ? -1 : cardNode.getWindowId();
         } catch (RuntimeException error) {
             preview = null;
             previewJob = null;
@@ -445,7 +468,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 WindowManager.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
         params.x = Math.max(0, (getResources().getDisplayMetrics().widthPixels - params.width) / 2);
         params.y = dp(36);
-        addHeader(card, "截图失败 · code=" + errorCode, this::removePreview, params);
+        addHeader(card, "截图失败 · code=" + errorCode, this::closePreview, params);
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout results = new LinearLayout(this);
@@ -468,6 +491,8 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         ocrLabel = null;
         try {
             windowManager.addView(card, params);
+            AccessibilityNodeInfo cardNode = card.createAccessibilityNodeInfo();
+            overlayWindowId = cardNode == null ? -1 : cardNode.getWindowId();
         } catch (RuntimeException error) {
             preview = null;
         }
@@ -494,6 +519,17 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             ocrLabel.setText(getString(R.string.probe_ocr_failure,
                     error.getClass().getSimpleName(),
                     SystemClock.elapsedRealtime() - startedAt));
+        });
+    }
+
+    private void finishOcrCanceled(CaptureJob job, long startedAt) {
+        job.finishPhysical();
+        requestGate.finishPhysical(job.requestId);
+        maybeShutdown();
+        main.post(() -> {
+            if (destroyed || previewJob != job || !isCurrentPage(job)) return;
+            ocrLabel.setText(getString(R.string.probe_ocr_failure,
+                    "已取消", SystemClock.elapsedRealtime() - startedAt));
         });
     }
 
@@ -533,28 +569,44 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private NodeReport collectNodes(AccessibilityNodeInfo root) {
         NodeReport report = new NodeReport();
-        collectNode(root, report, new HashSet<>(), 0);
+        collectNode(root, report, new HashSet<>(), 0, null, 0);
+        report.fragments.addAll(TextAssembly.fromNodes(report.nodes));
+        report.textBlocks = report.fragments.size();
         return report;
     }
 
     private void collectNode(AccessibilityNodeInfo node, NodeReport report,
-                              Set<String> seenAtPosition, int depth) {
+                              Set<String> seenAtPosition, int depth,
+                              String parentId, int childIndex) {
         if (node == null) return;
         if (depth > MAX_NODE_DEPTH || report.visitedNodes >= MAX_VISITED_NODES) {
             report.truncated = true;
             return;
         }
         report.visitedNodes++;
-        if (!node.isVisibleToUser()) return;
         Rect bounds = new Rect();
         node.getBoundsInScreen(bounds);
-        appendNodeValue(node.getText(), bounds, report, seenAtPosition, "text");
-        appendNodeValue(node.getContentDescription(), bounds, report, seenAtPosition, "desc");
+        Rect windowBounds = new Rect();
+        node.getBoundsInWindow(windowBounds);
+        String id = "n" + report.visitedNodes;
+        report.nodes.add(new NodeRecord(id, parentId, childIndex, report.visitedNodes - 1,
+                node.getWindowId(), toRaw(node.getText()), toRaw(node.getContentDescription()),
+                toRaw(node.getClassName()), node.getViewIdResourceName(),
+                toBounds(bounds), toBounds(windowBounds), node.isVisibleToUser(),
+                node.isClickable(), node.getCollectionItemInfo() != null));
         for (int index = 0; index < node.getChildCount(); index++) {
             AccessibilityNodeInfo child = node.getChild(index);
-            if (child != null) collectNode(child, report, seenAtPosition, depth + 1);
+            if (child != null) collectNode(child, report, seenAtPosition, depth + 1, id, index);
             if (report.truncated) return;
         }
+    }
+
+    private String toRaw(CharSequence value) {
+        return value == null ? null : value.toString();
+    }
+
+    private Bounds toBounds(Rect value) {
+        return value == null ? null : new Bounds(value.left, value.top, value.right, value.bottom);
     }
 
     private void appendNodeValue(CharSequence value, Rect bounds, NodeReport report,
@@ -587,8 +639,9 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             return false;
         }
         AccessibilityNodeInfo source = event.getSource();
-        if (source == null) return true;
+        if (source == null) return false;
         try {
+            if (overlayWindowId != -1 && source.getWindowId() == overlayWindowId) return true;
             Rect sourceBounds = new Rect();
             source.getBoundsInScreen(sourceBounds);
             Rect cardBounds = new Rect();
@@ -602,6 +655,9 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private boolean isPageEvent(int eventType) {
         return eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                || eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                || eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
                 || eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED;
     }
 
@@ -620,9 +676,16 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         }
         if (preview != null && windowManager != null) safeRemove(preview);
         preview = null;
+        overlayWindowId = -1;
         ocrLabel = null;
         if (previewJob != null) previewJob.detachPreview();
         previewJob = null;
+    }
+
+    private void closePreview() {
+        requestGate.invalidate();
+        removePreview();
+        maybeShutdown();
     }
 
     private void addHeader(LinearLayout card, String title, Runnable closeAction,
@@ -781,12 +844,20 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private static final class NodeReport {
         final StringBuilder output = new StringBuilder();
+        final List<NodeRecord> nodes = new java.util.ArrayList<>();
+        final List<TextFragment> fragments = new java.util.ArrayList<>();
         int visitedNodes;
         int textBlocks;
         boolean truncated;
 
         String displayText() {
-            String value = output.length() == 0 ? "（没有可见文字节点）" : output.toString().trim();
+            StringBuilder assembled = new StringBuilder();
+            for (TextFragment fragment : fragments) {
+                assembled.append('[').append(fragment.source).append(' ')
+                        .append(fragment.bounds == null ? "无边界" : fragment.bounds)
+                        .append("] ").append(fragment.rawText).append('\n');
+            }
+            String value = assembled.length() == 0 ? "（没有可见文字节点）" : assembled.toString().trim();
             return truncated ? value + "\n[节点遍历达到深度或数量上限，结果可能截断]" : value;
         }
     }
