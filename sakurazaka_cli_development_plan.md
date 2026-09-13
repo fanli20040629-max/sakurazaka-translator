@@ -1123,3 +1123,13 @@ adb devices -l
 实际证据：`verify-probe-logic.ps1` PASS；`:app:lintDebug` 成功（0 error、1 个 Gradle 版本提示）；`:app:assembleDebug` 成功；最终 APK 包名 `com.fanli.sakurazakatranslator`、版本 `0.1.0-probe`、大小 `53,683,519` 字节、SHA-256 `1B8C9B66EFE45189B05E382DFE54E2A7839D3C250B39E81062034B4E1A676799`，无 INTERNET/ACCESS_NETWORK_STATE，包含 bundled 日文 OCR 模型。随后针对手机反馈，已过滤探针自身 `TYPE_WINDOW_STATE_CHANGED`、普通 `TYPE_WINDOW_CONTENT_CHANGED` 和悬浮窗导致的 `TYPE_WINDOWS_CHANGED` 失效路径，移除卡片前先解除 ImageView 的 Bitmap 引用。ADB 已重新识别设备；该包待安装复测，截图、OCR 正文、合成真机验收及目标 App 四类页面仍待执行；P0.5 不得标为通过。
 
 下一入口是 B：连接设备、安装上述 APK、开启无障碍服务并先完成内置合成页验收；B 通过后才进入 C 目标 App 四类页面，不进入翻译开发。
+
+### 28.10 正文整理版探针优化（2026-09-12，最新执行入口）
+
+完整实现与交接见 [docs/PROBE_TEXT_OPTIMIZATION_HANDOFF.md](docs/PROBE_TEXT_OPTIMIZATION_HANDOFF.md)。该文档包含 M0～M5 实施顺序、数据契约、节点原文保真、分类排序和保守去重、OCR 候选对照、生命周期规则、T01～T19 测试、构建交付、失败回退、启动提示词与时间估算。
+
+本节更新任务顺序：在保留第 28.7 节生命周期、安全和正文门槛的基础上，先完成节点主路径及必要的正文整理，再重新做合成/目标回归。正文整理可作为修复探针的工作提前实施，不构成翻译、API Key 或缓存开发授权，也不降低原正文验收门槛。
+
+实际证据已更新：旧包已安装并运行；用户确认卡片稳定可操作，合成和部分目标页面截图/OCR 有证据；目标节点描述保留符号，OCR 存在错字、漏符号与错序。现有自测未真正覆盖所有生产回调。下方或前文“未安装”“A1～A5 全行为已验证”“四类基本齐全”等旧结论不作为当前验收证据。长文/截断、目标重复样本及系统性生命周期回归仍待验证，P0.5 未通过。
+
+状态：本次仅写入方案与更新入口，M0～M5 尚未实施，新 APK 尚未生成。首个完整可复测 APK 规划约 6～12 小时有效工作，另计手机复测及返修；详见新交接第 12 节，不能视为模型性能测量或期限承诺。
