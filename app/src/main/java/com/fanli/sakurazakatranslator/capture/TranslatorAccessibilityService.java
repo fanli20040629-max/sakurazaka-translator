@@ -23,6 +23,7 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -37,9 +38,13 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -63,6 +68,10 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     private LinearLayout preview;
     private ImageView previewImage;
     private TextView ocrLabel;
+    private LinearLayout ocrCandidates;
+    private TextView selectedOcrLabel;
+    private final Set<String> selectedOcrIds = new LinkedHashSet<>();
+    private final Map<String, String> ocrTextById = new LinkedHashMap<>();
     private CaptureJob previewJob;
     private CaptureJob inFlightJob;
     private boolean destroyed;
@@ -417,6 +426,15 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         ocrLabel.setText(R.string.probe_ocr_processing);
         ocrLabel.setTextColor(Color.BLACK);
         results.addView(ocrLabel);
+        ocrCandidates = new LinearLayout(this);
+        ocrCandidates.setOrientation(LinearLayout.VERTICAL);
+        results.addView(ocrCandidates);
+        selectedOcrLabel = new TextView(this);
+        selectedOcrLabel.setText(R.string.probe_ocr_selected_empty);
+        selectedOcrLabel.setTextColor(Color.DKGRAY);
+        results.addView(selectedOcrLabel);
+        selectedOcrIds.clear();
+        ocrTextById.clear();
         TextView metadata = new TextView(this);
         metadata.setText(metadataText("截图+节点", job.packageName, job.windowId,
                 report, startedAt, null));
@@ -440,6 +458,8 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 previewImage = null;
             }
             ocrLabel = null;
+            ocrCandidates = null;
+            selectedOcrLabel = null;
             job.detachPreview();
         }
     }
@@ -489,6 +509,8 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         preview = card;
         previewJob = null;
         ocrLabel = null;
+        ocrCandidates = null;
+        selectedOcrLabel = null;
         try {
             windowManager.addView(card, params);
             AccessibilityNodeInfo cardNode = card.createAccessibilityNodeInfo();
@@ -504,9 +526,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         maybeShutdown();
         main.post(() -> {
             if (destroyed || previewJob != job || !isCurrentPage(job)) return;
-            String value = formatOcr(text);
-            ocrLabel.setText(getString(R.string.probe_ocr_result, value,
-                    SystemClock.elapsedRealtime() - startedAt));
+            renderOcrCandidates(text, SystemClock.elapsedRealtime() - startedAt);
         });
     }
 
@@ -519,6 +539,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             ocrLabel.setText(getString(R.string.probe_ocr_failure,
                     error.getClass().getSimpleName(),
                     SystemClock.elapsedRealtime() - startedAt));
+            if (ocrCandidates != null) ocrCandidates.removeAllViews();
         });
     }
 
@@ -530,31 +551,75 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             if (destroyed || previewJob != job || !isCurrentPage(job)) return;
             ocrLabel.setText(getString(R.string.probe_ocr_failure,
                     "已取消", SystemClock.elapsedRealtime() - startedAt));
+            if (ocrCandidates != null) ocrCandidates.removeAllViews();
         });
     }
 
-    private String formatOcr(Text text) {
-        if (text == null || text.getText() == null || text.getText().isBlank()) {
-            return "（未识别到文字）";
-        }
-        StringBuilder output = new StringBuilder();
+    private List<TextFragment> toOcrFragments(Text text) {
+        List<TextFragment> fragments = new ArrayList<>();
+        if (text == null || text.getText() == null || text.getText().isBlank()) return fragments;
         int blockIndex = 0;
         for (Text.TextBlock block : text.getTextBlocks()) {
             blockIndex++;
             List<Text.Line> lines = block.getLines();
             if (lines == null || lines.isEmpty()) {
-                output.append("[块").append(blockIndex).append(' ')
-                        .append(formatBounds(block.getBoundingBox())).append("] ")
-                        .append(block.getText()).append('\n');
+                fragments.add(TextAssembly.ocr("ocr:" + blockIndex + ":0",
+                        block.getText(), toBounds(block.getBoundingBox()), fragments.size()));
                 continue;
             }
+            int lineIndex = 0;
             for (Text.Line line : lines) {
-                output.append("[块").append(blockIndex).append(' ')
-                        .append(formatBounds(line.getBoundingBox())).append("] ")
-                        .append(line.getText()).append('\n');
+                lineIndex++;
+                fragments.add(TextAssembly.ocr("ocr:" + blockIndex + ":" + lineIndex,
+                        line.getText(), toBounds(line.getBoundingBox()), fragments.size()));
             }
         }
-        return output.length() == 0 ? text.getText() : output.toString().trim();
+        return fragments;
+    }
+
+    private void renderOcrCandidates(Text text, long elapsedMs) {
+        if (ocrLabel == null || ocrCandidates == null) return;
+        List<TextFragment> fragments = toOcrFragments(text);
+        ocrCandidates.removeAllViews();
+        selectedOcrIds.clear();
+        ocrTextById.clear();
+        if (fragments.isEmpty()) {
+            ocrLabel.setText(getString(R.string.probe_ocr_empty, elapsedMs));
+            updateSelectedOcr();
+            return;
+        }
+        ocrLabel.setText(getString(R.string.probe_ocr_candidates, fragments.size(), elapsedMs));
+        for (TextFragment fragment : fragments) {
+            ocrTextById.put(fragment.id, fragment.rawText);
+            CheckBox candidate = new CheckBox(this);
+            candidate.setText(fragment.rawText);
+            candidate.setTextColor(Color.BLACK);
+            candidate.setContentDescription("OCR 候选；边界="
+                    + (fragment.bounds == null ? "无" : fragment.bounds));
+            candidate.setOnCheckedChangeListener((button, checked) -> {
+                if (checked) selectedOcrIds.add(fragment.id);
+                else selectedOcrIds.remove(fragment.id);
+                updateSelectedOcr();
+            });
+            ocrCandidates.addView(candidate);
+        }
+        updateSelectedOcr();
+    }
+
+    private void updateSelectedOcr() {
+        if (selectedOcrLabel == null) return;
+        if (selectedOcrIds.isEmpty()) {
+            selectedOcrLabel.setText(R.string.probe_ocr_selected_empty);
+            return;
+        }
+        StringBuilder selected = new StringBuilder();
+        for (String id : selectedOcrIds) {
+            String value = ocrTextById.get(id);
+            if (value == null) continue;
+            if (selected.length() > 0) selected.append('\n');
+            selected.append(value);
+        }
+        selectedOcrLabel.setText(getString(R.string.probe_ocr_selected, selected));
     }
 
     private String metadataText(String source, String packageName, int windowId,
@@ -678,6 +743,10 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         preview = null;
         overlayWindowId = -1;
         ocrLabel = null;
+        ocrCandidates = null;
+        selectedOcrLabel = null;
+        selectedOcrIds.clear();
+        ocrTextById.clear();
         if (previewJob != null) previewJob.detachPreview();
         previewJob = null;
     }
@@ -851,13 +920,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         boolean truncated;
 
         String displayText() {
-            StringBuilder assembled = new StringBuilder();
-            for (TextFragment fragment : fragments) {
-                assembled.append('[').append(fragment.source).append(' ')
-                        .append(fragment.bounds == null ? "无边界" : fragment.bounds)
-                        .append("] ").append(fragment.rawText).append('\n');
-            }
-            String value = assembled.length() == 0 ? "（没有可见文字节点）" : assembled.toString().trim();
+            String value = TextAssembly.formatNodeSections(fragments);
             return truncated ? value + "\n[节点遍历达到深度或数量上限，结果可能截断]" : value;
         }
     }

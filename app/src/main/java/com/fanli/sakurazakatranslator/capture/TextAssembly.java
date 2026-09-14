@@ -6,11 +6,16 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import static com.fanli.sakurazakatranslator.capture.ProbeModels.*;
 
 /** Conservative, deterministic assembly. It never edits raw text or globally de-dupes strings. */
 public final class TextAssembly {
+    private static final Pattern DURATION = Pattern.compile("^\\s*\\d{1,2}:\\d{2}\\s*$");
+    private static final Pattern DATE_AND_TIME = Pattern.compile(
+            "^.{1,48}\\b\\d{1,2}/\\d{1,2}\\s+\\d{1,2}:\\d{2}\\s*$");
+
     private TextAssembly() { }
 
     public static List<TextFragment> fromNodes(List<NodeRecord> nodes) {
@@ -18,10 +23,17 @@ public final class TextAssembly {
         Set<String> sameNode = new HashSet<>();
         for (NodeRecord node : nodes) {
             if (!node.visible) continue;
-            append(result, sameNode, node.id + ":text", node.rawText, Source.NODE_TEXT,
-                    node, "node text");
-            append(result, sameNode, node.id + ":desc", node.rawDescription,
-                    Source.NODE_DESCRIPTION, node, "node description");
+            if (hasText(node.rawText) && node.rawText.equals(node.rawDescription)) {
+                append(result, sameNode, node.id + ":text+desc", node.rawText, Source.NODE_TEXT,
+                        node, List.of(node.id + ":text", node.id + ":description"),
+                        "同一节点的 text 与 description 完全相同，合并显示并保留双来源");
+            } else {
+                append(result, sameNode, node.id + ":text", node.rawText, Source.NODE_TEXT,
+                        node, Collections.singletonList(node.id + ":text"), "节点 text");
+                append(result, sameNode, node.id + ":desc", node.rawDescription,
+                        Source.NODE_DESCRIPTION, node,
+                        Collections.singletonList(node.id + ":description"), "节点 description");
+            }
         }
         result.sort(fragmentComparator());
         return result;
@@ -44,10 +56,22 @@ public final class TextAssembly {
                 "OCR 独立候选，未自动合并", false);
     }
 
+    /** Reading-oriented node output. Coordinates and source IDs stay in diagnostics. */
+    public static String formatNodeSections(List<TextFragment> fragments) {
+        StringBuilder output = new StringBuilder();
+        appendSection(output, "正文候选", fragments, Role.BODY);
+        appendSection(output, "作者/时间等信息（待核对）", fragments, Role.METADATA);
+        appendSection(output, "其他可见文字（待核对）", fragments, Role.UNKNOWN);
+        appendSection(output, "控件/媒体（未加入正文）", fragments,
+                Role.CONTROL, Role.MEDIA_CANDIDATE);
+        if (output.length() == 0) return "（没有可见文字节点）";
+        return output.toString();
+    }
+
     private static void append(List<TextFragment> result, Set<String> sameNode,
                                String id, String value, Source source, NodeRecord node,
-                               String reason) {
-        if (value == null || value.isEmpty() || value.trim().isEmpty()) return;
+                               List<String> provenance, String reason) {
+        if (!hasText(value)) return;
         String key = node.id + "|" + value + "|" + source;
         if (!sameNode.add(key)) return;
         Role role = classify(node, value, source);
@@ -55,7 +79,8 @@ public final class TextAssembly {
         if (node.screenBounds == null || node.screenBounds.isEmpty()) warnings.add("BOUNDARY_MISSING");
         if (!node.visible) warnings.add("NOT_VISIBLE");
         result.add(new TextFragment(id, value, value, source, role, null,
-                node.screenBounds, Collections.singletonList(node.id), warnings, reason, false));
+                node.screenBounds, provenance, warnings,
+                reason + "；" + roleReason(role), false));
     }
 
     private static Role classify(NodeRecord node, String value, Source source) {
@@ -63,8 +88,42 @@ public final class TextAssembly {
         String cls = node.className == null ? "" : node.className;
         if (cls.endsWith("Button") || cls.endsWith("ImageButton")) return Role.CONTROL;
         if (cls.endsWith("ImageView") || cls.endsWith("VideoView")) return Role.MEDIA_CANDIDATE;
+        if (!value.contains("\n") && (DURATION.matcher(value).matches()
+                || DATE_AND_TIME.matcher(value).matches())) return Role.METADATA;
         if (node.clickable && value.length() < 24) return Role.UNKNOWN;
         return Role.BODY;
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isEmpty() && !value.trim().isEmpty();
+    }
+
+    private static String roleReason(Role role) {
+        return switch (role) {
+            case BODY -> "未发现明确辅助语义，保守保留为正文候选";
+            case METADATA -> "单行日期时间或时长格式，单独展示但不删除";
+            case CONTROL -> "控件类节点";
+            case MEDIA_CANDIDATE -> "媒体类节点";
+            case UNKNOWN -> "短可点击文字，语义不足，等待核对";
+        };
+    }
+
+    private static void appendSection(StringBuilder output, String title,
+                                      List<TextFragment> fragments, Role... roles) {
+        StringBuilder section = new StringBuilder();
+        for (TextFragment fragment : fragments) {
+            if (!contains(roles, fragment.role)) continue;
+            if (section.length() > 0) section.append('\n');
+            section.append(fragment.displayText);
+        }
+        if (section.length() == 0) return;
+        if (output.length() > 0) output.append("\n\n");
+        output.append(title).append("\n").append(section);
+    }
+
+    private static boolean contains(Role[] roles, Role value) {
+        for (Role role : roles) if (role == value) return true;
+        return false;
     }
 
     private static Comparator<TextFragment> fragmentComparator() {

@@ -63,12 +63,36 @@ public final class ProbeLogicSelfTest {
                 "n3", null, 2, 2, 7, "同じ文", null, "android.widget.TextView", null,
                 new com.fanli.sakurazakatranslator.capture.ProbeModels.Bounds(0, 90, 100, 120),
                 null, true, false, false));
+        nodes.add(new com.fanli.sakurazakatranslator.capture.ProbeModels.NodeRecord(
+                "n4", null, 3, 3, 7, null, "小田倉 麗奈 9/13 19:34",
+                "android.widget.TextView", null,
+                new com.fanli.sakurazakatranslator.capture.ProbeModels.Bounds(0, 130, 100, 150),
+                null, true, false, false));
+        nodes.add(new com.fanli.sakurazakatranslator.capture.ProbeModels.NodeRecord(
+                "n5", null, 4, 4, 7, "00:25", null, "android.widget.TextView", null,
+                new com.fanli.sakurazakatranslator.capture.ProbeModels.Bounds(0, 160, 100, 180),
+                null, true, false, false));
         java.util.List<com.fanli.sakurazakatranslator.capture.ProbeModels.TextFragment> fragments =
                 com.fanli.sakurazakatranslator.capture.TextAssembly.fromNodes(nodes);
-        check(fragments.size() == 4, "assembly keeps conflicting source and positional repeats");
+        check(fragments.size() == 5,
+                "assembly merges identical same-node fields and keeps positional repeats");
         check(fragments.get(0).rawText.equals("花♡(笑)\n二行目"), "assembly preserves raw symbols and newline");
+        check(fragments.get(0).provenance.size() == 2,
+                "same text and description keep both provenance entries");
         check(fragments.get(0).role == com.fanli.sakurazakatranslator.capture.ProbeModels.Role.BODY,
                 "ordinary text node is a body candidate");
+        check(fragments.get(3).role == com.fanli.sakurazakatranslator.capture.ProbeModels.Role.METADATA,
+                "single-line author/date/time is separated as metadata");
+        check(fragments.get(4).role == com.fanli.sakurazakatranslator.capture.ProbeModels.Role.METADATA,
+                "voice duration is separated as metadata");
+        String reading = com.fanli.sakurazakatranslator.capture.TextAssembly
+                .formatNodeSections(fragments);
+        check(reading.contains("正文候选\n花♡(笑)\n二行目"),
+                "reading view keeps body symbols and line breaks");
+        check(reading.contains("作者/时间等信息（待核对）"),
+                "reading view labels metadata conservatively");
+        check(!reading.contains("0,10,100,40") && !reading.contains("NODE_TEXT"),
+                "reading view keeps coordinates and source IDs out of the body area");
     }
 
     private static void checkCoordinator() {

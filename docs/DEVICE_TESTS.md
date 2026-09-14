@@ -12,6 +12,16 @@
 
 据此，目标长消息不再记为“完全无证据”，但 P0.5 仍未通过。下一轮需先落地 M2/M3，再用新包对照原页面复测：正文/元数据分类、同句重复、边缘截断、OCR 候选选择、切页和锁屏失效。
 
+### 依据本次证据生成的待复测包
+
+- 路径：`D:\Projects\sakurazaka-translator\app\build\outputs\apk\debug\app-debug.apk`
+- 版本：`0.3.0-probe-select`（versionCode `3`）
+- 大小：`53,383,422` 字节
+- SHA-256：`443F2341C476E4180C7E39CCA336B4E6F84C0C99C12C2C79E3E3308F456D9D63`
+- 静态验证：逻辑测试、Java 编译、lint、assembleDebug、v2 签名、权限和日文 OCR 模型检查均通过。
+- 安装状态：2026-09-14 已通过 ADB `install -r` 成功覆盖安装；设备端确认 versionCode `3`、versionName `0.3.0-probe-select`；原无障碍服务配置仍在，助手进程可启动。
+- 待手机确认：正文分区不误分长文；坐标不再遮挡阅读；OCR 候选默认不选、可逐项勾选并正确汇总；OCR 更新不重置滚动位置；关闭、切页和锁屏仍能使旧结果失效。
+
 ## 2026-09-13 规划交接
 
 本次未检查 ADB、未安装、未截图或执行手机用例。旧安装和视觉证据继续按下表保留，不能当作新版本验收。下一轮按 [方案 2.0](PROBE_TEXT_OPTIMIZATION_HANDOFF.md) 第 9 节：先 Android 适配与合成测试，再目标四类页面；T01～T25 的桌面、Android 适配、目标正文证据分开记录。缺长文/重复/截断样本保持待验证。
