@@ -10,3 +10,6 @@ captures/
 *.log
 debug.keystore
 .verification/
+__MACOSX/
+.DS_Store
+test-result.png
