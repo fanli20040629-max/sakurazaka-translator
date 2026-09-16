@@ -36,8 +36,7 @@ public final class ProbeLogicSelfTest {
         checkLease("OCR success", 1);
         checkLease("OCR failure", 1);
         checkLease("OCR startup exception", 1);
-        System.out.println("Lifecycle cases: cancel/reclick, stale callback, destroy/late screenshot,");
-        System.out.println("OCR success/failure/start exception, lock/page identity, card scroll, release-once");
+        System.out.println("Pure lifecycle models checked; Android callbacks and UI require device tests.");
 
         String sameA = ProbeLogic.positionKey("重复", 0, 0, 20, 20);
         String sameB = ProbeLogic.positionKey("重复", 0, 0, 20, 20);
@@ -100,6 +99,8 @@ public final class ProbeLogicSelfTest {
                 new com.fanli.sakurazakatranslator.capture.CaptureCoordinator();
         long id = coordinator.begin();
         check(id > 0 && coordinator.isBusy(), "coordinator starts node task");
+        check(coordinator.advance(id, CaptureCoordinator.Physical.SCREENSHOT),
+                "coordinator enters screenshot before OCR");
         check(coordinator.advance(id, com.fanli.sakurazakatranslator.capture.CaptureCoordinator.Physical.OCR),
                 "coordinator advances physical task");
         coordinator.invalidate();
@@ -107,6 +108,16 @@ public final class ProbeLogicSelfTest {
         check(coordinator.begin() == -1, "coordinator rejects overlap after invalidation");
         coordinator.finishPhysical(id);
         check(!coordinator.isBusy(), "coordinator releases after physical completion");
+        long next = coordinator.begin();
+        coordinator.finishPhysical(id);
+        check(coordinator.isBusy() && coordinator.isCurrent(next), "old completion cannot finish new work");
+        check(!coordinator.advance(next, null), "null phase is rejected");
+        check(coordinator.advance(next, CaptureCoordinator.Physical.SCREENSHOT), "new screenshot starts");
+        check(coordinator.advance(next, CaptureCoordinator.Physical.OCR), "new OCR starts");
+        coordinator.closeResult();
+        check(!coordinator.isCurrent(next) && coordinator.isBusy(), "close hides result but keeps occupancy");
+        coordinator.finishPhysical(next);
+        check(!coordinator.isBusy(), "closed task still releases on completion");
     }
 
     private static void check(boolean condition, String message) {

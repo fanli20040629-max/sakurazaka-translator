@@ -32,35 +32,29 @@ import android.widget.Toast;
 
 import com.fanli.sakurazakatranslator.ProbePreferences;
 import com.fanli.sakurazakatranslator.R;
-import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
-import com.google.mlkit.vision.text.TextRecognition;
-import com.google.mlkit.vision.text.TextRecognizer;
-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions;
+import com.fanli.sakurazakatranslator.capture.NodeTreeReader.NodeReport;
+import com.fanli.sakurazakatranslator.domain.StyleProfile;
+import com.fanli.sakurazakatranslator.domain.TranslationRequest;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static com.fanli.sakurazakatranslator.capture.ProbeModels.*;
 
 public final class TranslatorAccessibilityService extends AccessibilityService {
-    private static final int MAX_NODE_DEPTH = 80;
-    private static final int MAX_VISITED_NODES = 800;
+    private static final StyleProfile DEFAULT_STYLE =
+            new StyleProfile("default", "默认风格", "保留原文语气、符号和换行");
 
     private final ExecutorService screenshotExecutor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Object lifecycleLock = new Object();
-    private final TextRecognizer recognizer = TextRecognition.getClient(
-            new JapaneseTextRecognizerOptions.Builder().build());
-    private final ProbeLogic.RequestGate requestGate = new ProbeLogic.RequestGate();
+    private final OcrProcessor ocrProcessor = new OcrProcessor();
+    private final NodeTreeReader nodeReader = new NodeTreeReader();
+    // One coordinator owns both logical validity and physical screenshot/OCR occupancy.
+    private final CaptureCoordinator captureCoordinator = new CaptureCoordinator();
 
     private WindowManager windowManager;
     private KeyguardManager keyguardManager;
@@ -70,11 +64,13 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     private TextView ocrLabel;
     private LinearLayout ocrCandidates;
     private TextView selectedOcrLabel;
-    private final Set<String> selectedOcrIds = new LinkedHashSet<>();
-    private final Map<String, String> ocrTextById = new LinkedHashMap<>();
+    private TextView confirmedMessageLabel;
+    private final OcrSelection ocrSelection = new OcrSelection();
+    // Preview only; never submitted. Clear on uncheck, close, or page invalidation.
+    private TranslationRequest pendingTranslationRequest;
     private CaptureJob previewJob;
     private CaptureJob inFlightJob;
-    private boolean destroyed;
+    private volatile boolean destroyed;
     private boolean receiverRegistered;
     private boolean recognizerClosed;
     private long pageEpoch;
@@ -209,14 +205,14 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         foregroundWindowId = windowId;
         if (changed && (hadIdentity || packageName != null)) {
             pageEpoch++;
-            requestGate.invalidate();
+            captureCoordinator.invalidate();
             removePreview();
         }
     }
 
     private void markPageChanged() {
         pageEpoch++;
-        requestGate.invalidate();
+        captureCoordinator.invalidate();
         removePreview();
     }
 
@@ -288,7 +284,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             return;
         }
 
-        final long requestId = requestGate.begin();
+        final long requestId = captureCoordinator.begin();
         if (requestId < 0) {
             root.recycle();
             toast("识别正在进行，请等待当前任务完成");
@@ -302,9 +298,9 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         final long capturedEpoch = pageEpoch;
         final NodeReport nodeReport;
         try {
-            nodeReport = collectNodes(root);
+            nodeReport = nodeReader.read(root);
         } catch (RuntimeException error) {
-            requestGate.finishPhysical(requestId);
+            captureCoordinator.finishPhysical(requestId);
             maybeShutdown();
             toast("节点读取失败：" + error.getClass().getSimpleName());
             return;
@@ -313,6 +309,11 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         }
 
         try {
+            if (!captureCoordinator.advance(requestId, CaptureCoordinator.Physical.SCREENSHOT)) {
+                captureCoordinator.finishPhysical(requestId);
+                toast("截图任务无法启动");
+                return;
+            }
             takeScreenshotOfWindow(windowId, screenshotExecutor, new TakeScreenshotCallback() {
                 @Override public void onFailure(int errorCode) {
                     main.post(() -> finishScreenshotFailure(
@@ -355,8 +356,13 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 discardJob(job);
                 return;
             }
+            if (!captureCoordinator.advance(job.requestId, CaptureCoordinator.Physical.OCR)) {
+                // Page invalidation is expected cancellation, not an OCR failure.
+                discardJob(job);
+                return;
+            }
             try {
-                recognizer.process(InputImage.fromBitmap(job.bitmap, 0))
+                ocrProcessor.recognize(job.bitmap)
                         .addOnCompleteListener(task -> {
                             if (task.isCanceled()) {
                                 finishOcrCanceled(job, startedAt);
@@ -390,7 +396,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void showPreviewIfCurrent(CaptureJob job, NodeReport report, long startedAt) {
-        if (!isCurrentPage(job) || !requestGate.isCurrent(job.requestId)) {
+        if (!isCurrentPage(job) || !captureCoordinator.isCurrent(job.requestId)) {
             job.detachPreview();
             return;
         }
@@ -433,8 +439,12 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         selectedOcrLabel.setText(R.string.probe_ocr_selected_empty);
         selectedOcrLabel.setTextColor(Color.DKGRAY);
         results.addView(selectedOcrLabel);
-        selectedOcrIds.clear();
-        ocrTextById.clear();
+        confirmedMessageLabel = new TextView(this);
+        confirmedMessageLabel.setText(getString(R.string.probe_confirmed_fragments, 0));
+        confirmedMessageLabel.setTextColor(Color.rgb(30, 90, 30));
+        results.addView(confirmedMessageLabel);
+        ocrSelection.clear();
+        pendingTranslationRequest = null;
         TextView metadata = new TextView(this);
         metadata.setText(metadataText("截图+节点", job.packageName, job.windowId,
                 report, startedAt, null));
@@ -460,15 +470,16 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             ocrLabel = null;
             ocrCandidates = null;
             selectedOcrLabel = null;
+            confirmedMessageLabel = null;
             job.detachPreview();
         }
     }
 
     private void finishScreenshotFailure(long requestId, NodeReport report, String packageName,
                                          int windowId, long epoch, int errorCode, long startedAt) {
-        boolean valid = !destroyed && requestGate.isCurrent(requestId)
+        boolean valid = !destroyed && captureCoordinator.isCurrent(requestId)
                 && isCurrentPage(packageName, windowId, epoch);
-        requestGate.finishPhysical(requestId);
+        captureCoordinator.finishPhysical(requestId);
         maybeShutdown();
         if (!valid) return;
         showFailurePreview(report, packageName, windowId, epoch, errorCode, startedAt);
@@ -511,6 +522,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         ocrLabel = null;
         ocrCandidates = null;
         selectedOcrLabel = null;
+        confirmedMessageLabel = null;
         try {
             windowManager.addView(card, params);
             AccessibilityNodeInfo cardNode = card.createAccessibilityNodeInfo();
@@ -521,9 +533,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void finishOcr(CaptureJob job, Text text, long startedAt) {
-        job.finishPhysical();
-        requestGate.finishPhysical(job.requestId);
-        maybeShutdown();
+        completeJob(job);
         main.post(() -> {
             if (destroyed || previewJob != job || !isCurrentPage(job)) return;
             renderOcrCandidates(text, SystemClock.elapsedRealtime() - startedAt);
@@ -531,9 +541,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void finishOcrError(CaptureJob job, Exception error, long startedAt) {
-        job.finishPhysical();
-        requestGate.finishPhysical(job.requestId);
-        maybeShutdown();
+        completeJob(job);
         main.post(() -> {
             if (destroyed || previewJob != job || !isCurrentPage(job)) return;
             ocrLabel.setText(getString(R.string.probe_ocr_failure,
@@ -544,9 +552,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void finishOcrCanceled(CaptureJob job, long startedAt) {
-        job.finishPhysical();
-        requestGate.finishPhysical(job.requestId);
-        maybeShutdown();
+        completeJob(job);
         main.post(() -> {
             if (destroyed || previewJob != job || !isCurrentPage(job)) return;
             ocrLabel.setText(getString(R.string.probe_ocr_failure,
@@ -555,50 +561,27 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         });
     }
 
-    private List<TextFragment> toOcrFragments(Text text) {
-        List<TextFragment> fragments = new ArrayList<>();
-        if (text == null || text.getText() == null || text.getText().isBlank()) return fragments;
-        int blockIndex = 0;
-        for (Text.TextBlock block : text.getTextBlocks()) {
-            blockIndex++;
-            List<Text.Line> lines = block.getLines();
-            if (lines == null || lines.isEmpty()) {
-                fragments.add(TextAssembly.ocr("ocr:" + blockIndex + ":0",
-                        block.getText(), toBounds(block.getBoundingBox()), fragments.size()));
-                continue;
-            }
-            int lineIndex = 0;
-            for (Text.Line line : lines) {
-                lineIndex++;
-                fragments.add(TextAssembly.ocr("ocr:" + blockIndex + ":" + lineIndex,
-                        line.getText(), toBounds(line.getBoundingBox()), fragments.size()));
-            }
-        }
-        return fragments;
-    }
-
     private void renderOcrCandidates(Text text, long elapsedMs) {
         if (ocrLabel == null || ocrCandidates == null) return;
-        List<TextFragment> fragments = toOcrFragments(text);
         ocrCandidates.removeAllViews();
-        selectedOcrIds.clear();
-        ocrTextById.clear();
+        ocrSelection.replace(OcrProcessor.fragments(text));
+        List<TextFragment> fragments = ocrSelection.fragments();
         if (fragments.isEmpty()) {
             ocrLabel.setText(getString(R.string.probe_ocr_empty, elapsedMs));
             updateSelectedOcr();
             return;
         }
         ocrLabel.setText(getString(R.string.probe_ocr_candidates, fragments.size(), elapsedMs));
+        CaptureJob selectionJob = previewJob;
         for (TextFragment fragment : fragments) {
-            ocrTextById.put(fragment.id, fragment.rawText);
             CheckBox candidate = new CheckBox(this);
             candidate.setText(fragment.rawText);
             candidate.setTextColor(Color.BLACK);
             candidate.setContentDescription("OCR 候选；边界="
                     + (fragment.bounds == null ? "无" : fragment.bounds));
             candidate.setOnCheckedChangeListener((button, checked) -> {
-                if (checked) selectedOcrIds.add(fragment.id);
-                else selectedOcrIds.remove(fragment.id);
+                if (previewJob != selectionJob) return;
+                ocrSelection.setSelected(fragment.id, checked);
                 updateSelectedOcr();
             });
             ocrCandidates.addView(candidate);
@@ -608,18 +591,15 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private void updateSelectedOcr() {
         if (selectedOcrLabel == null) return;
-        if (selectedOcrIds.isEmpty()) {
-            selectedOcrLabel.setText(R.string.probe_ocr_selected_empty);
-            return;
+        String selected = ocrSelection.selectedText();
+        selectedOcrLabel.setText(selected.isEmpty()
+                ? getString(R.string.probe_ocr_selected_empty)
+                : getString(R.string.probe_ocr_selected, selected));
+        pendingTranslationRequest = ocrSelection.request(DEFAULT_STYLE).orElse(null);
+        if (confirmedMessageLabel != null) {
+            int count = pendingTranslationRequest == null ? 0 : pendingTranslationRequest.messages.size();
+            confirmedMessageLabel.setText(getString(R.string.probe_confirmed_fragments, count));
         }
-        StringBuilder selected = new StringBuilder();
-        for (String id : selectedOcrIds) {
-            String value = ocrTextById.get(id);
-            if (value == null) continue;
-            if (selected.length() > 0) selected.append('\n');
-            selected.append(value);
-        }
-        selectedOcrLabel.setText(getString(R.string.probe_ocr_selected, selected));
     }
 
     private String metadataText(String source, String packageName, int windowId,
@@ -630,60 +610,6 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                         + " · 总耗时=%dms%s",
                 source, packageName, windowId, pageEpoch, report.visitedNodes,
                 report.textBlocks, SystemClock.elapsedRealtime() - startedAt, suffix);
-    }
-
-    private NodeReport collectNodes(AccessibilityNodeInfo root) {
-        NodeReport report = new NodeReport();
-        collectNode(root, report, new HashSet<>(), 0, null, 0);
-        report.fragments.addAll(TextAssembly.fromNodes(report.nodes));
-        report.textBlocks = report.fragments.size();
-        return report;
-    }
-
-    private void collectNode(AccessibilityNodeInfo node, NodeReport report,
-                              Set<String> seenAtPosition, int depth,
-                              String parentId, int childIndex) {
-        if (node == null) return;
-        if (depth > MAX_NODE_DEPTH || report.visitedNodes >= MAX_VISITED_NODES) {
-            report.truncated = true;
-            return;
-        }
-        report.visitedNodes++;
-        Rect bounds = new Rect();
-        node.getBoundsInScreen(bounds);
-        Rect windowBounds = new Rect();
-        node.getBoundsInWindow(windowBounds);
-        String id = "n" + report.visitedNodes;
-        report.nodes.add(new NodeRecord(id, parentId, childIndex, report.visitedNodes - 1,
-                node.getWindowId(), toRaw(node.getText()), toRaw(node.getContentDescription()),
-                toRaw(node.getClassName()), node.getViewIdResourceName(),
-                toBounds(bounds), toBounds(windowBounds), node.isVisibleToUser(),
-                node.isClickable(), node.getCollectionItemInfo() != null));
-        for (int index = 0; index < node.getChildCount(); index++) {
-            AccessibilityNodeInfo child = node.getChild(index);
-            if (child != null) collectNode(child, report, seenAtPosition, depth + 1, id, index);
-            if (report.truncated) return;
-        }
-    }
-
-    private String toRaw(CharSequence value) {
-        return value == null ? null : value.toString();
-    }
-
-    private Bounds toBounds(Rect value) {
-        return value == null ? null : new Bounds(value.left, value.top, value.right, value.bottom);
-    }
-
-    private void appendNodeValue(CharSequence value, Rect bounds, NodeReport report,
-                                 Set<String> seenAtPosition, String source) {
-        if (value == null || value.toString().isBlank()) return;
-        String key = ProbeLogic.positionKey(value.toString(),
-                bounds.left, bounds.top, bounds.right, bounds.bottom);
-        if (!seenAtPosition.add(key)) return;
-        report.textBlocks++;
-        report.output.append('[').append(source).append(' ')
-                .append(bounds.flattenToString()).append("] ")
-                .append(value).append('\n');
     }
 
     private boolean isCurrentPage(CaptureJob job) {
@@ -727,7 +653,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void invalidateAndClear(boolean removeTrigger) {
-        requestGate.invalidate();
+        captureCoordinator.invalidate();
         pageEpoch++;
         removePreview();
         if (removeTrigger) removeTrigger();
@@ -745,14 +671,15 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         ocrLabel = null;
         ocrCandidates = null;
         selectedOcrLabel = null;
-        selectedOcrIds.clear();
-        ocrTextById.clear();
+        confirmedMessageLabel = null;
+        ocrSelection.clear();
+        pendingTranslationRequest = null;
         if (previewJob != null) previewJob.detachPreview();
         previewJob = null;
     }
 
     private void closePreview() {
-        requestGate.invalidate();
+        captureCoordinator.invalidate();
         removePreview();
         maybeShutdown();
     }
@@ -836,8 +763,8 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private void maybeShutdown() {
         synchronized (lifecycleLock) {
-            if (destroyed && !requestGate.isBusy() && !recognizerClosed) {
-                recognizer.close();
+            if (destroyed && !captureCoordinator.isBusy() && !recognizerClosed) {
+                ocrProcessor.close();
                 recognizerClosed = true;
                 screenshotExecutor.shutdown();
             }
@@ -846,8 +773,16 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private void discardJob(CaptureJob job) {
         job.detachPreview();
+        completeJob(job);
+    }
+
+    /** All OCR terminal paths release physical occupancy without invalidating a valid preview. */
+    private void completeJob(CaptureJob job) {
         job.finishPhysical();
-        requestGate.finishPhysical(job.requestId);
+        captureCoordinator.finishPhysical(job.requestId);
+        synchronized (lifecycleLock) {
+            if (inFlightJob == job) inFlightJob = null;
+        }
         maybeShutdown();
     }
 
@@ -866,10 +801,6 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         return Math.max(dp(180), Math.min(dp(460), Math.round(available * 0.42f)));
     }
 
-    private String formatBounds(Rect bounds) {
-        return bounds == null ? "无边界" : bounds.flattenToString();
-    }
-
     private boolean isLocked() {
         return keyguardManager != null && keyguardManager.isDeviceLocked();
     }
@@ -886,7 +817,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         synchronized (lifecycleLock) {
             destroyed = true;
             pageEpoch++;
-            requestGate.invalidate();
+            captureCoordinator.invalidate();
         }
         invalidateAndClear(true);
         synchronized (lifecycleLock) {
@@ -908,20 +839,6 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         WindowSnapshot(String packageName, int windowId) {
             this.packageName = packageName;
             this.windowId = windowId;
-        }
-    }
-
-    private static final class NodeReport {
-        final StringBuilder output = new StringBuilder();
-        final List<NodeRecord> nodes = new java.util.ArrayList<>();
-        final List<TextFragment> fragments = new java.util.ArrayList<>();
-        int visitedNodes;
-        int textBlocks;
-        boolean truncated;
-
-        String displayText() {
-            String value = TextAssembly.formatNodeSections(fragments);
-            return truncated ? value + "\n[节点遍历达到深度或数量上限，结果可能截断]" : value;
         }
     }
 

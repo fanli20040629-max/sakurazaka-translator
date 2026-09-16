@@ -21,7 +21,10 @@ public final class TextAssembly {
     public static List<TextFragment> fromNodes(List<NodeRecord> nodes) {
         List<TextFragment> result = new ArrayList<>();
         Set<String> sameNode = new HashSet<>();
-        for (NodeRecord node : nodes) {
+        // Preserve numeric traversal order at identical screen coordinates.
+        List<NodeRecord> orderedNodes = new ArrayList<>(nodes);
+        orderedNodes.sort(Comparator.comparingInt(node -> node.traversalIndex));
+        for (NodeRecord node : orderedNodes) {
             if (!node.visible) continue;
             if (hasText(node.rawText) && node.rawText.equals(node.rawDescription)) {
                 append(result, sameNode, node.id + ":text+desc", node.rawText, Source.NODE_TEXT,
@@ -45,6 +48,13 @@ public final class TextAssembly {
         result.addAll(ocrFragments);
         result.sort(fragmentComparator());
         return result;
+    }
+
+    /** Horizontal chat layout: top, then left; ties preserve provider/traversal order. */
+    public static List<TextFragment> screenOrder(List<TextFragment> fragments) {
+        List<TextFragment> result = new ArrayList<>(fragments);
+        result.sort(fragmentComparator());
+        return List.copyOf(result);
     }
 
     public static TextFragment ocr(String id, String rawText, Bounds bounds, int index) {
@@ -134,8 +144,8 @@ public final class TextAssembly {
             if (top != 0) return top;
             int left = Integer.compare(x == null ? Integer.MAX_VALUE : x.left,
                     y == null ? Integer.MAX_VALUE : y.left);
-            if (left != 0) return left;
-            return a.id.compareTo(b.id);
+            // Java's stable sort keeps input order when coordinates are identical.
+            return left;
         };
     }
 }

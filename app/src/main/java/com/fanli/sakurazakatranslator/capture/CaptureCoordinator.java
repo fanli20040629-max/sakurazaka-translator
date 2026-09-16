@@ -27,7 +27,10 @@ public final class CaptureCoordinator {
     }
 
     public synchronized boolean advance(long id, Physical next) {
-        if (!isCurrent(id) || next == Physical.IDLE) return false;
+        if (!isCurrent(id)) return false;
+        boolean allowed = physical == Physical.NODES && next == Physical.SCREENSHOT
+                || physical == Physical.SCREENSHOT && next == Physical.OCR;
+        if (!allowed) return false;
         physical = next;
         return true;
     }

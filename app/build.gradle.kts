@@ -10,8 +10,8 @@ android {
         applicationId = "com.fanli.sakurazakatranslator"
         minSdk = 34
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0-probe-select"
+        versionCode = 4
+        versionName = "0.3.1-probe-review"
     }
 
     buildTypes {
@@ -22,10 +22,14 @@ android {
 
     signingConfigs {
         getByName("debug") {
-            storeFile = rootProject.file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            // Preserve the original machine's key when present. New checkouts use AGP's default.
+            val localDebugKey = rootProject.file("debug.keystore")
+            if (localDebugKey.isFile) {
+                storeFile = localDebugKey
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 

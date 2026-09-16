@@ -1,0 +1,7 @@
+com.fanli.sakurazakatranslator.capture.ProbeLogicSelfTest
+com.fanli.sakurazakatranslator.capture.OcrSelectionFormatterSelfTest
+com.fanli.sakurazakatranslator.capture.ConfirmedMessageFactorySelfTest
+com.fanli.sakurazakatranslator.domain.DomainSelfTest
+com.fanli.sakurazakatranslator.domain.TranslationRequestFactorySelfTest
+com.fanli.sakurazakatranslator.capture.ReviewRegressionSelfTest
+com.fanli.sakurazakatranslator.capture.OcrSelectionSelfTest

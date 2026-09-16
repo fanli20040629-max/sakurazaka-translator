@@ -1,5 +1,12 @@
 # 技术决策
 
+## 2026-09-16：本轮重构与验证边界
+
+- 生产协调器统一为 CaptureCoordinator；旧 RequestGate 仅保留在历史自测，不并行执行任务。
+- 节点读取、ML Kit适配和候选状态分别放入 NodeTreeReader、OcrProcessor、OcrSelection；页面校验和资源生命周期仍由 Service 负责。
+- 所选 OCR 是片段，不冒充完整消息；时间/作者仍需手动排除；只建立本地请求预览。
+- 七组纯 Java 测试通过，Android 编译/lint/APK/真机尚未验证。详细证据与后续规划见 [当前代码审核与改进方案](当前代码审核与改进方案.md)。下方决策保留为历史。
+
 ## 2026-09-13：正文整理版方案 2.0（待实施）
 
 - 执行入口统一为 [PROBE_TEXT_OPTIMIZATION_HANDOFF.md](PROBE_TEXT_OPTIMIZATION_HANDOFF.md)。先完成协调器和结构节点，再分类、OCR 对照、UI 与完整验证；测试从 M1 同步推进。
