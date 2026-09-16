@@ -2,11 +2,12 @@
 
 ## 2026-09-16 当前源码入口（以下旧日期内容保留为历史）
 
-- 当前版本标记 `0.3.1-probe-review` / 4，尚未生成并验证本轮 APK。
+- 当前版本标记 `0.3.1-probe-review` / 4；本轮 APK 已生成并通过真机前桌面验收。用户已运行当前样式的目标页面结果卡片，但截图未显示版本/哈希，设备安装身份尚未由 dumpsys 独立确认。
 - 生产协调器为 CaptureCoordinator；节点读取和 OCR 抽出为 NodeTreeReader / OcrProcessor；OcrSelection 统一勾选状态，生成本地 TranslationRequest 预览。
-- 七组纯 Java 测试通过（含七个先失败后修复的回归场景）；Android 依赖类未在本机编译。Windows 脚本、Android lint/构建、安装及新包真机测试待验证。
+- Windows PowerShell 5.1 总入口已通过：七组纯 Java 测试、Android Java 编译、lint 和 assembleDebug 均成功。APK 大小 `53,400,368` 字节，SHA-256 `463CE6B4EAD735B07EF442B5DE09B2BF551A614517F18FA7AA95D9DA22C6E249`；v2 签名有效，无 INTERNET/ACCESS_NETWORK_STATE，包含日文 OCR native pipeline 与 bundled 模型。lint 仅有 Gradle 新版本提示和一个未使用字符串警告。
 - 当前 OCR 作者/时间仍需用户手动排除；未实现完整消息边界、符号翻译校验、DeepSeek 或中文贴回。
-- 下一步按 [本轮优化验收与交接](docs/本轮优化验收与交接.md) 在原电脑合并并构建；查验与规划见 [当前代码审核与改进方案](docs/当前代码审核与改进方案.md)。旧 core_modules 只作参考，不能覆盖主工程。
+- 用户已提供本轮目标页面的三份真机视觉证据：截图/OCR/候选链路可运行，`1080×2340`，一个样本总耗时 `283ms`；Emoji 被误识别为 `9`/`米`，作者时间仍混入，长消息仍按 OCR 行拆分。设备端版本未由 dumpsys 独立确认，生命周期和连续使用矩阵仍待测。详见 [2026-09-16 真机测试结果与后续修复建议](docs/2026-09-16真机测试结果与后续修复建议.md)。
+- 当前 ADB 已无连接设备。下一步优先实施节点原文与 OCR 的保真对应、不可恢复符号警告、元数据分类和有证据的消息分组，再按 [本轮优化验收与交接](docs/本轮优化验收与交接.md) 执行完整真机矩阵。旧 core_modules 只作参考，不能覆盖主工程。
 
 以下历史记录更新时间：2026-09-14
 
