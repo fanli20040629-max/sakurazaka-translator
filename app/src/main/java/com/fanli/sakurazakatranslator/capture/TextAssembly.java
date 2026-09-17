@@ -57,10 +57,19 @@ public final class TextAssembly {
         return List.copyOf(result);
     }
 
+    /** Screen nodes and screenshot OCR have different coordinate spaces; never interleave them. */
+    public static List<TextFragment> candidateOrder(List<TextFragment> fragments) {
+        List<TextFragment> result = new ArrayList<>(fragments);
+        result.sort(Comparator.comparingInt((TextFragment f) -> f.source == Source.OCR ? 1 : 0)
+                .thenComparing(fragmentComparator()));
+        return List.copyOf(result);
+    }
+
     public static TextFragment ocr(String id, String rawText, Bounds bounds, int index) {
         List<String> warnings = new ArrayList<>();
         if (bounds == null || bounds.isEmpty()) warnings.add("OCR_BOUNDARY_MISSING");
         warnings.add("COORDINATE_MAPPING_UNVERIFIED");
+        warnings.add("SYMBOL_UNVERIFIED");
         return new TextFragment(id, rawText, rawText, Source.OCR, Role.MEDIA_CANDIDATE,
                 null, bounds, Collections.emptyList(), warnings,
                 "OCR 独立候选，未自动合并", false);
@@ -86,6 +95,9 @@ public final class TextAssembly {
         if (!sameNode.add(key)) return;
         Role role = classify(node, value, source);
         List<String> warnings = new ArrayList<>();
+        if (source == Source.NODE_DESCRIPTION) warnings.add("NODE_DESCRIPTION_UNVERIFIED");
+        if (hasText(node.rawText) && hasText(node.rawDescription)
+                && !node.rawText.equals(node.rawDescription)) warnings.add("NODE_FIELDS_DIFFER");
         if (node.screenBounds == null || node.screenBounds.isEmpty()) warnings.add("BOUNDARY_MISSING");
         if (!node.visible) warnings.add("NOT_VISIBLE");
         result.add(new TextFragment(id, value, value, source, role, null,

@@ -69,6 +69,13 @@ public final class ProbeModels {
             return new TextFragment(id, rawText, displayText, source, role, messageId,
                     bounds, provenance, warnings, decisionReason, value);
         }
+        public TextFragment withWarning(String warning) {
+            if (warnings.contains(warning)) return this;
+            List<String> annotated = new ArrayList<>(warnings);
+            annotated.add(warning);
+            return new TextFragment(id, rawText, displayText, source, role, messageId,
+                    bounds, provenance, annotated, decisionReason, selected);
+        }
     }
 
     public static final class NodeSnapshot {

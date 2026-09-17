@@ -25,7 +25,9 @@ public final class NodeTreeReader {
 
         private NodeReport(List<NodeRecord> nodes, boolean truncated) {
             this.nodes = List.copyOf(nodes);
-            this.fragments = List.copyOf(TextAssembly.fromNodes(nodes));
+            List<TextFragment> collected = TextAssembly.fromNodes(nodes);
+            if (truncated) collected.replaceAll(f -> f.withWarning("NODE_TRAVERSAL_TRUNCATED"));
+            this.fragments = List.copyOf(collected);
             this.visitedNodes = nodes.size();
             this.textBlocks = fragments.size();
             this.truncated = truncated;

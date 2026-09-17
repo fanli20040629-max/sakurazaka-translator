@@ -10,8 +10,8 @@ android {
         applicationId = "com.fanli.sakurazakatranslator"
         minSdk = 34
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.3.1-probe-review"
+        versionCode = 6
+        versionName = "0.5.0-translation-trial"
     }
 
     buildTypes {
@@ -45,4 +45,6 @@ android {
 
 dependencies {
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

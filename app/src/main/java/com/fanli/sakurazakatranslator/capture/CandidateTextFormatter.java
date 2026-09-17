@@ -3,9 +3,9 @@ package com.fanli.sakurazakatranslator.capture;
 import java.util.List;
 import java.util.Set;
 
-/** Formats explicitly selected OCR candidates without changing their order or text. */
-public final class OcrSelectionFormatter {
-    private OcrSelectionFormatter() { }
+/** Formats selected candidates in supplied source/reading order, without modifying raw text. */
+public final class CandidateTextFormatter {
+    private CandidateTextFormatter() { }
 
     public static String format(List<ProbeModels.TextFragment> orderedFragments,
                                 Set<String> selectedIds) {

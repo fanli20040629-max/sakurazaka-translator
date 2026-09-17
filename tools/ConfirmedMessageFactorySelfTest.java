@@ -14,8 +14,8 @@ public final class ConfirmedMessageFactorySelfTest {
                 "time", "9/14 20:00", "9/14 20:00", ProbeModels.Source.NODE_TEXT,
                 ProbeModels.Role.METADATA, null, secondBounds, List.of(), List.of(), "metadata", false);
         List<com.fanli.sakurazakatranslator.domain.ChatMessage> messages =
-                ConfirmedMessageFactory.fromFragments(List.of(body, metadata), Set.of("body", "time"));
-        check(messages.size() == 1, "metadata must not enter translation messages");
+                ConfirmedMessageFactory.fromFragments(List.of(body, metadata), Set.of("body"));
+        check(messages.size() == 1, "unselected metadata must not enter translation messages");
         check(messages.get(0).originalText.equals("正文～"), "body text must remain unchanged");
         System.out.println("ConfirmedMessageFactorySelfTest PASS");
     }

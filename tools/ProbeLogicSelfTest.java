@@ -28,10 +28,16 @@ public final class ProbeLogicSelfTest {
         check(!ProbeLogic.samePage("a", 7, 3, "a", 7, 4), "epoch change must invalidate page");
         check(!ProbeLogic.resultAllowed("a", 7, 3, "a", 7, 3, true),
                 "locked device must reject a result");
-        check(ProbeLogic.isOverlayScrollEvent(true, true, true),
+        check(ProbeLogic.isOwnedWindowEvent(true, 12, 12, 13),
                 "card scroll must be recognized as an overlay event");
-        check(!ProbeLogic.isOverlayScrollEvent(true, true, false),
+        check(!ProbeLogic.isOwnedWindowEvent(true, 7, 12, 13),
                 "target scroll must not be treated as a card event");
+        check(!ProbeLogic.isOwnedWindowEvent(true, -1, -1, -1),
+                "missing window IDs never establish ownership");
+        check(!ProbeLogic.isOwnedWindowEvent(false, 12, 12, 13),
+                "a foreign package cannot claim an overlay ID");
+        check(ProbeLogic.isOwnedWindowEvent(true, 13, 12, 13),
+                "registered trigger window events are also owned");
 
         checkLease("OCR success", 1);
         checkLease("OCR failure", 1);

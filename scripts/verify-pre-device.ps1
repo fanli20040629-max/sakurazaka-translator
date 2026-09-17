@@ -1,6 +1,8 @@
 param(
     [string]$JavaHome = $env:JAVA_HOME,
-    [string]$SdkRoot = $env:ANDROID_SDK_ROOT
+    [string]$SdkRoot = $env:ANDROID_SDK_ROOT,
+    [int]$ExpectedVersionCode = 6,
+    [string]$ExpectedVersionName = '0.5.0-translation-trial'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,12 +34,12 @@ try {
         throw 'Desktop logic verification failed.'
     }
 
-    & .\gradlew.bat :app:compileDebugJavaWithJavac :app:lintDebug :app:assembleDebug --console=plain --no-daemon
+    & .\gradlew.bat :app:compileDebugJavaWithJavac :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --console=plain --no-daemon
     if ($LASTEXITCODE -ne 0) {
         throw 'Android compile, lint, or APK build failed.'
     }
 
-    & (Join-Path $PSScriptRoot 'verify-android-artifact.ps1') -SdkRoot $SdkRoot
+    & (Join-Path $PSScriptRoot 'verify-android-artifact.ps1') -SdkRoot $SdkRoot -ExpectedVersionCode $ExpectedVersionCode -ExpectedVersionName $ExpectedVersionName
     if ($LASTEXITCODE -ne 0) {
         throw 'Android artifact verification failed.'
     }

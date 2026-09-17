@@ -6,10 +6,13 @@ import java.util.List;
 /** Desktop tests live outside app/src/main so they are not shipped in the APK. */
 public final class DomainSelfTest {
     public static void main(String[] args) {
-        ChatMessage first = new ChatMessage("m2", "第二行♡", "ocr", 200, 10);
-        ChatMessage second = new ChatMessage("m1", "第一行～", "node", 100, 10);
+        PageToken page = new PageToken(1, "test.app", 7, 0);
+        ChatMessage first = new ChatMessage("m2", "第二行♡", "NODE_TEXT", 10, 200, 80, 220,
+                "SCREEN", List.of("n2"), List.of());
+        ChatMessage second = new ChatMessage("m1", "第一行～", "NODE_TEXT", 10, 100, 80, 120,
+                "SCREEN", List.of("n1"), List.of());
         List<ChatMessage> source = new ArrayList<>(List.of(first, second));
-        TranslationRequest request = new TranslationRequest(source,
+        TranslationRequest request = new TranslationRequest(page, source,
                 new StyleProfile("idol-a", "示例偶像", "保留轻柔语气"), true);
         source.clear();
         check(request.messages.size() == 2, "request must own an immutable message snapshot");
@@ -18,16 +21,17 @@ public final class DomainSelfTest {
         check(selected.size() == 2, "both selected messages must remain");
         check(selected.get(0).id.equals("m1"), "selection must sort top to bottom");
 
-        TranslationResult providerResult = new TranslationResult(List.of("第一行～", "第二行♡"),
+        TranslationResult providerResult = new TranslationResult(List.of(
+                new TranslationResult.Item("m1", "第一行～"), new TranslationResult.Item("m2", "第二行♡")),
                 List.of(), true);
         TranslationResult accepted = TranslationValidator.validate(request, providerResult);
         check(accepted.accepted, "matching confirmed result must be accepted");
 
-        TranslationRequest unconfirmed = new TranslationRequest(request.messages, request.style, false);
+        TranslationRequest unconfirmed = new TranslationRequest(page, request.messages, request.style, false);
         TranslationResult rejected = TranslationValidator.validate(unconfirmed, providerResult);
         check(!rejected.accepted && rejected.warnings.contains("INPUT_NOT_CONFIRMED"),
                 "unconfirmed input must be rejected");
-        var mutableTranslations = new ArrayList<>(List.of("翻译"));
+        var mutableTranslations = new ArrayList<>(List.of(new TranslationResult.Item("m1", "翻译")));
         var mutableWarnings = new ArrayList<>(List.of("PROVIDER_WARNING"));
         var snapshot = new TranslationResult(mutableTranslations, mutableWarnings, true);
         mutableTranslations.clear();

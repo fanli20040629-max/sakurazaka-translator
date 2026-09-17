@@ -3,8 +3,8 @@ param(
     [string]$SdkRoot,
     [string]$BuildToolsVersion = '36.0.0',
     [string]$ExpectedPackage = 'com.fanli.sakurazakatranslator',
-    [int]$ExpectedVersionCode = 4,
-    [string]$ExpectedVersionName = '0.3.1-probe-review'
+    [int]$ExpectedVersionCode = 6,
+    [string]$ExpectedVersionName = '0.5.0-translation-trial'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,7 +55,10 @@ $permissions = @(& $aapt dump permissions $ApkPath 2>&1)
 if ($LASTEXITCODE -ne 0) {
     throw 'aapt failed to read APK permissions.'
 }
-foreach ($forbiddenPermission in @('android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE')) {
+if (-not ($permissions -match 'android\.permission\.INTERNET')) {
+    throw 'Text translation requires INTERNET permission.'
+}
+foreach ($forbiddenPermission in @('android.permission.ACCESS_NETWORK_STATE')) {
     if ($permissions -match [regex]::Escape($forbiddenPermission)) {
         throw "Forbidden permission found: $forbiddenPermission"
     }
@@ -99,5 +102,5 @@ Write-Output "Version: $ExpectedVersionName ($ExpectedVersionCode)"
 Write-Output "Size: $($apk.Length) bytes"
 Write-Output "SHA-256: $($hash.Hash)"
 Write-Output 'Signature: v2 verified'
-Write-Output 'Permissions: INTERNET and ACCESS_NETWORK_STATE absent'
+Write-Output 'Permissions: INTERNET present for explicit text translation; ACCESS_NETWORK_STATE absent'
 Write-Output 'OCR: native pipeline and bundled Japanese model present'

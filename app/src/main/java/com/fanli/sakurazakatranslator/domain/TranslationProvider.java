@@ -1,6 +1,7 @@
 package com.fanli.sakurazakatranslator.domain;
 
-/** Draft provider boundary. Future network implementations must run off the UI thread. */
+/** One explicit text request. Implementations must run off the UI thread. */
 public interface TranslationProvider {
-    TranslationResult translate(TranslationRequest request);
+    TranslationResult translate(TranslationRequest request) throws java.io.IOException;
+    void cancel();
 }

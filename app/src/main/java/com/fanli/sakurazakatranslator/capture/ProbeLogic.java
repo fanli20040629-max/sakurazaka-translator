@@ -20,9 +20,10 @@ public final class ProbeLogic {
                 actualPackage, actualWindowId, actualEpoch);
     }
 
-    public static boolean isOverlayScrollEvent(boolean samePackage, boolean viewScrolled,
-                                               boolean sourceIntersectsCard) {
-        return samePackage && viewScrolled && sourceIntersectsCard;
+    public static boolean isOwnedWindowEvent(boolean samePackage, int eventWindowId,
+                                            int previewWindowId, int triggerWindowId) {
+        return samePackage && eventWindowId >= 0
+                && (eventWindowId == previewWindowId || eventWindowId == triggerWindowId);
     }
 
     public static final class RequestGate {

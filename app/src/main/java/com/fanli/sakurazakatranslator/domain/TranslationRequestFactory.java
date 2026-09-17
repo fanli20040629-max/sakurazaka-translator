@@ -6,7 +6,8 @@ import java.util.List;
 public final class TranslationRequestFactory {
     private TranslationRequestFactory() { }
 
-    public static TranslationRequest confirmed(List<ChatMessage> messages, StyleProfile style) {
-        return new TranslationRequest(messages, style, true);
+    public static TranslationRequest confirmed(PageToken pageToken, List<ChatMessage> messages,
+                                               StyleProfile style) {
+        return new TranslationRequest(pageToken, messages, style, true);
     }
 }

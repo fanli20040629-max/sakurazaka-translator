@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -25,7 +26,7 @@ public final class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(24), dp(32), dp(24), dp(32));
 
-        TextView title = text("櫻坂翻译助手 · P0.5 探针", 24);
+        TextView title = text("櫻坂翻译助手 · 中文翻译试用版", 24);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         root.addView(title);
         root.addView(text("先在本页验证节点、截图和 OCR，再测试目标 App。", 16));
@@ -59,7 +60,15 @@ public final class MainActivity extends Activity {
         settings.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         root.addView(settings);
 
+        Button translationSettings = new Button(this);
+        translationSettings.setText("设置 DeepSeek 和偶像风格");
+        translationSettings.setOnClickListener(v -> startActivity(
+                new Intent(this, TranslationSettingsActivity.class)));
+        root.addView(translationSettings);
+
         root.addView(text("合成节点样本", 20));
+        addSyntheticMessage(root, 0, "こんにちは～💗", "改行と絵文字を残してね👩🏽‍💻");
+        addSyntheticMessage(root, 1, "こんにちは～💗", "別のメッセージです。");
         root.addView(text("櫻坂翻译助手へようこそ。\n改行を含む日本語の長文です。画面上の文章を順番どおりに読み取り、途中で欠けないことを確認してください。", 18));
         root.addView(text("同じ文章を残してください。", 18));
         root.addView(text("同じ文章を残してください。", 18));
@@ -80,6 +89,23 @@ public final class MainActivity extends Activity {
         view.setTextColor(Color.BLACK);
         view.setPadding(0, dp(10), 0, dp(10));
         return view;
+    }
+
+    /** Two explicit list items let the device test grouping without using subscription content. */
+    private void addSyntheticMessage(LinearLayout parent, int row, String first, String second) {
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        item.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setCollectionItemInfo(new AccessibilityNodeInfo.CollectionItemInfo.Builder()
+                        .setRowIndex(row).setRowSpan(1).setColumnIndex(0).setColumnSpan(1).build());
+            }
+        });
+        item.addView(text(first, 18));
+        item.addView(text(second, 18));
+        parent.addView(item);
     }
 
     private int dp(int value) {

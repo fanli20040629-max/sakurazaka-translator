@@ -43,15 +43,16 @@ public final class ReviewRegressionSelfTest {
         });
         run("blank translation is rejected", () -> {
             var request = TranslationRequestFactory.confirmed(
-                    List.of(new ChatMessage("m", "こんにちは", "node", 0, 0)), null);
+                    new PageToken(1, "test.app", 7, 0), List.of(message("m")), null);
             check(!TranslationValidator.validate(request,
-                    new TranslationResult(List.of("  "), List.of(), true)).accepted);
+                    new TranslationResult(List.of(new TranslationResult.Item("m1", "  ")), List.of(), true)).accepted);
         });
         run("duplicate message IDs are rejected", () -> {
-            var message = new ChatMessage("same", "こんにちは", "node", 0, 0);
+            var message = message("same");
             boolean rejected = false;
             try {
-                TranslationRequestFactory.confirmed(List.of(message, message), null);
+                TranslationRequestFactory.confirmed(new PageToken(1, "test.app", 7, 0),
+                        List.of(message, message), null);
             } catch (IllegalArgumentException expected) {
                 rejected = true;
             }
@@ -64,6 +65,11 @@ public final class ReviewRegressionSelfTest {
     private static NodeRecord node(String id, int index, String text, Bounds bounds) {
         return new NodeRecord(id, null, index, index, 7, text, null,
                 "android.widget.TextView", null, bounds, bounds, true, false, false);
+    }
+
+    private static ChatMessage message(String id) {
+        return new ChatMessage(id, "こんにちは", "NODE_TEXT", 0, 0, 100, 30,
+                "SCREEN", List.of(id), List.of());
     }
 
     private static void run(String name, Runnable test) {
