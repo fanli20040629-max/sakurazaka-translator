@@ -1,6 +1,6 @@
 # 櫻坂翻译助手
 
-> 当前（2026-09-19）：`0.5.0-translation-trial` / 6，分支 `codex/node-candidates`、基准提交 `dfbcded`。Windows 总构建、APK 身份检查和 Samsung SM-S9060 / Android 16 真机主流程已完成；真实 DeepSeek 中文翻译、编号对应和可见 Emoji 保留已有证据。C01～C13 仍有部分边界未完整覆盖，作者/时间需人工排除，图片 OCR 和原气泡附近显示尚未完成。以 [本轮优化验收与交接](docs/本轮优化验收与交接.md) 和 [真机测试记录](docs/DEVICE_TESTS.md) 为准；下面 0.4 及更早状态仅为历史。INTERNET 权限只用于用户确认后的文本发送，不上传截图。
+> 当前（2026-09-19）：`0.5.0-translation-trial` / 6，实际构建与真机测试对应源码提交 `dfbcded`；测试记录提交 `f408d3e` 已推送，`master` 与 `codex/node-candidates` 已快进同步。Windows 总构建、APK 身份检查和 Samsung SM-S9060 / Android 16 真机主流程已完成；真实 DeepSeek 中文翻译、编号对应和可见 Emoji 保留已有证据。C01～C13 仍有部分边界未完整覆盖，作者/时间需人工排除，图片 OCR 和原气泡附近显示尚未完成。以 [本轮优化验收与交接](docs/本轮优化验收与交接.md) 和 [真机测试记录](docs/DEVICE_TESTS.md) 为准；下面 0.4 及更早状态仅为历史。INTERNET 权限只用于用户确认后的文本发送，不上传截图。
 
 > 2026-09-17 历史交接记录：[本轮优化验收与交接](docs/本轮优化验收与交接.md)。当时源码版本为 `0.4.0-probe-candidates` / 5：节点可先勾选，OCR 后续追加不重置选择，原文、来源、风险与页面身份随本地请求保留。该段所述“尚待 Windows 完成”只表示当时状态；当前结论以上一段 2026-09-19 摘要为准。
 

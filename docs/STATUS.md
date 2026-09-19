@@ -2,7 +2,7 @@
 
 ## 最新：0.5.0-translation-trial / 6
 
-已写入分组建议、已有符号保护、DeepSeek 显式文本翻译、风格/Key 设置和中文卡片；不是自动表情恢复或原气泡相邻显示。`codex/node-candidates @ dfbcded` 已在 Windows 通过九组桌面逻辑测试、JUnit、Android 编译、lint、APK 构建和产物检查；新版 APK 已安装到 Samsung SM-S9060 / Android 16，真实 DeepSeek 中文翻译、编号对应和可见 Emoji 保留已确认。C01～C13 仍有部分边界未完整覆盖，作者/时间仍需人工排除，图片 OCR 不清晰。当前入口：[本轮优化验收与交接](本轮优化验收与交接.md)；逐项证据见 [真机测试记录](DEVICE_TESTS.md)。下方均为上一阶段及历史状态。
+已写入分组建议、已有符号保护、DeepSeek 显式文本翻译、风格/Key 设置和中文卡片；不是自动表情恢复或原气泡相邻显示。实际构建与真机测试对应 `dfbcded`，测试记录提交 `f408d3e` 已推送，`master` 与 `codex/node-candidates` 已快进同步。Windows 九组桌面逻辑测试、JUnit、Android 编译、lint、APK 构建和产物检查通过；新版 APK 已安装到 Samsung SM-S9060 / Android 16，真实 DeepSeek 中文翻译、编号对应和可见 Emoji 保留已确认。C01～C13 仍有部分边界未完整覆盖，作者/时间仍需人工排除，图片 OCR 不清晰。当前入口：[本轮优化验收与交接](本轮优化验收与交接.md)；逐项证据见 [真机测试记录](DEVICE_TESTS.md)。下方均为上一阶段及历史状态。
 
 ## 2026-09-17 当前源码状态
 
