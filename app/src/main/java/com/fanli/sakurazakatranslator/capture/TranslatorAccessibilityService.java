@@ -11,6 +11,7 @@ import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
 import android.os.Handler;
 import android.os.Looper;
@@ -41,6 +42,7 @@ import com.google.mlkit.vision.text.Text;
 import com.fanli.sakurazakatranslator.capture.NodeTreeReader.NodeReport;
 import com.fanli.sakurazakatranslator.domain.StyleProfile;
 import com.fanli.sakurazakatranslator.domain.TranslationRequest;
+import com.fanli.sakurazakatranslator.domain.TranslationResult;
 
 import java.util.List;
 import java.util.Locale;
@@ -67,6 +69,8 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     private Button trigger;
     private LinearLayout preview;
     private CandidatePanel candidatePanel;
+    private BubbleTranslationOverlay bubbleOverlay;
+    private Bounds previewWindowBounds;
     private PageToken previewPage;
     private List<NodeRecord> previewNodes = List.of();
     private final CandidateSelection candidateSelection = new CandidateSelection();
@@ -95,6 +99,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     @Override protected void onServiceConnected() {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        bubbleOverlay = new BubbleTranslationOverlay(this, windowManager);
         keyguardManager = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
         AccessibilityServiceInfo info = getServiceInfo();
         if (info != null) {
@@ -119,7 +124,9 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 ? null : event.getPackageName().toString();
         // Our synthetic page shares the package, but not the registered overlay window IDs.
         if (ProbeLogic.isOwnedWindowEvent(getPackageName().equals(eventPackage),
-                event.getWindowId(), overlayWindowId, triggerWindowId)) {
+                event.getWindowId(), overlayWindowId, triggerWindowId)
+                || (getPackageName().equals(eventPackage) && bubbleOverlay != null
+                    && bubbleOverlay.ownsWindow(event.getWindowId()))) {
             refreshTriggerVisibility();
             return;
         }
@@ -229,7 +236,13 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 Gravity.TOP | Gravity.START);
         params.y = dp(72);
         params.x = Math.max(0, getResources().getDisplayMetrics().widthPixels - dp(132));
-        enableDrag(candidate, candidate, params, this::capture);
+        enableDrag(candidate, candidate, params, () -> {
+            if (bubbleOverlay != null && bubbleOverlay.isShowing()) restoreFullCard();
+            else capture();
+        }, () -> {
+            // Nearby labels reserve the old button position. Return locally before moving it.
+            if (bubbleOverlay != null && bubbleOverlay.isShowing()) restoreFullCard();
+        });
         try {
             windowManager.addView(candidate, params);
             trigger = candidate;
@@ -302,6 +315,9 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         final PageToken page;
         final NodeReport nodeReport;
         try {
+            Rect targetRect = new Rect();
+            target.getBoundsInScreen(targetRect);
+            previewWindowBounds = new Bounds(targetRect.left, targetRect.top, targetRect.right, targetRect.bottom);
             CharSequence packageName = root.getPackageName();
             page = new PageToken(requestId, packageName == null ? null : packageName.toString(),
                     target.getId(), pageEpoch);
@@ -460,29 +476,31 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         previewNodes = report.nodes;
         previewPage = page;
         candidatePanel = new CandidatePanel(this, report.fragments,
+                MessageGrouper.selectionGroups(report.fragments, report.nodes),
                 String.format(Locale.ROOT,
                         "版本=%s / %d\n请求=%d · windowId=%d · pageEpoch=%d\n"
                                 + "节点=%d · 候选=%d · 节点阶段=%dms\n%s\n"
-                                + "节点位置为屏幕坐标，OCR 位置为截图坐标；映射和消息边界均未验证。",
+                                + "节点使用屏幕坐标；分组依据列表结构。OCR 截图坐标不用于贴近显示。",
                         BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, page.requestId(),
                         page.windowId(), page.pageEpoch(), report.visitedNodes, report.textBlocks,
                         SystemClock.elapsedRealtime() - startedAt,
                         report.truncated ? "读取达到上限，原文可能不全" : "尚未确认可见正文完整性"),
-                (id, selected) -> {
+                (ids, selected) -> {
                     // A queued click on an old card must not close a newer card.
                     if (!page.equals(previewPage)) return;
                     if (!selectionAllowed(page)) {
                         closePreview();
                         return;
                     }
-                    if (candidateSelection.setSelected(page, id, selected)) {
+                    if (candidateSelection.setSelected(page, ids, selected)) {
                         candidatePanel.invalidateTranslation();
                         updateSelection(page);
                     }
                 },
                 (group, style) -> prepareTranslation(page, group, style),
                 (request, model) -> sendTranslation(page, request, model),
-                translationRunner::cancel);
+                this::cancelTranslationDisplay,
+                (request, result) -> showNearby(page, request, result));
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(candidatePanel);
@@ -560,6 +578,47 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 active.packageName, active.windowId, pageEpoch, isLocked());
     }
 
+    private void showNearby(PageToken page, TranslationRequest request, TranslationResult result) {
+        if (!selectionAllowed(page) || !page.equals(request.pageToken) || bubbleOverlay == null) return;
+        // Invisible keeps the registered card window and its confirmation intact for a local return.
+        preview.setVisibility(View.INVISIBLE);
+        if (trigger != null) trigger.setText("返回译文");
+        Bounds triggerBounds = null;
+        if (trigger != null) {
+            int[] location = new int[2];
+            trigger.getLocationOnScreen(location);
+            // Reserve enough room for either trigger label before its next layout pass.
+            triggerBounds = new Bounds(location[0], location[1],
+                    location[0] + Math.max(trigger.getWidth(), dp(132)), location[1] + trigger.getHeight());
+        }
+        bubbleOverlay.show(request, result, previewNodes, previewWindowBounds, triggerBounds,
+                () -> selectionAllowed(page), () -> {
+                    if (page.equals(previewPage)) {
+                        invalidateAndClear(false);
+                        toast("显示区域已变化，请重新取字。");
+                    }
+                }, count -> {
+                    if (!selectionAllowed(page)) return;
+                    if (count == 0) {
+                        restoreFullCard();
+                        toast("附近空间或原文位置不足，请在完整卡片查看译文。");
+                    } else {
+                        toast("已贴近显示 " + count + " 条；其余请点“返回译文”查看。滑动页面后会清除。");
+                    }
+                });
+    }
+
+    private void restoreFullCard() {
+        if (bubbleOverlay != null) bubbleOverlay.close();
+        if (trigger != null) trigger.setText("取字探针");
+        if (preview != null) preview.setVisibility(View.VISIBLE);
+    }
+
+    private void cancelTranslationDisplay() {
+        translationRunner.cancel();
+        restoreFullCard();
+    }
+
     private boolean isPreviewScrollEvent(AccessibilityEvent event) {
         if (preview == null || !getPackageName().equals(String.valueOf(event.getPackageName()))
                 || event.getEventType() != AccessibilityEvent.TYPE_VIEW_SCROLLED) {
@@ -593,6 +652,9 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private void removePreview() {
         translationRunner.cancel();
+        if (bubbleOverlay != null) bubbleOverlay.close();
+        if (trigger != null) trigger.setText("取字探针");
+        previewWindowBounds = null;
         if (candidatePanel != null) candidatePanel.releaseImage();
         if (preview != null && windowManager != null) safeRemove(preview);
         preview = null;
@@ -625,7 +687,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         close.setOnClickListener(v -> closeAction.run());
         header.addView(close);
         card.addView(header);
-        enableDrag(header, card, params, null);
+        enableDrag(header, card, params, null, null);
     }
 
     private WindowManager.LayoutParams overlayParams(int width, int height, int gravity) {
@@ -639,7 +701,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void enableDrag(View handle, View owner, WindowManager.LayoutParams params,
-                            Runnable clickAction) {
+                            Runnable clickAction, Runnable onDragStart) {
         if (clickAction != null) handle.setOnClickListener(view -> clickAction.run());
         handle.setOnTouchListener(new View.OnTouchListener() {
             float downX;
@@ -660,7 +722,11 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
                     int dx = Math.round(event.getRawX() - downX);
                     int dy = Math.round(event.getRawY() - downY);
-                    if (Math.abs(dx) > dp(6) || Math.abs(dy) > dp(6)) moved = true;
+                    if (!moved) {
+                        if (Math.abs(dx) <= dp(6) && Math.abs(dy) <= dp(6)) return true;
+                        moved = true;
+                        if (onDragStart != null) onDragStart.run();
+                    }
                     int maxX = Math.max(0, getResources().getDisplayMetrics().widthPixels - owner.getWidth());
                     int maxY = Math.max(0, getResources().getDisplayMetrics().heightPixels - owner.getHeight());
                     params.x = Math.max(0, Math.min(maxX, startX + dx));

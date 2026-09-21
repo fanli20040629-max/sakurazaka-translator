@@ -26,3 +26,6 @@ tools/DomainSelfTest.java
 tools/TranslationRequestFactorySelfTest.java
 tools/ReviewRegressionSelfTest.java
 tools/CandidateSelectionSelfTest.java
+tools/MessageGroupingSelfTest.java
+app/src/main/java/com/fanli/sakurazakatranslator/capture/BubbleLayout.java
+tools/BubbleLayoutSelfTest.java

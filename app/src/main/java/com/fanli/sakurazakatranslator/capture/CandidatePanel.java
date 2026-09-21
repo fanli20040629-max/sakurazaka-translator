@@ -13,13 +13,18 @@ import com.fanli.sakurazakatranslator.domain.TranslationRequest;
 import com.fanli.sakurazakatranslator.domain.TranslationResult;
 import com.fanli.sakurazakatranslator.domain.StyleProfile;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import static com.fanli.sakurazakatranslator.capture.ProbeModels.*;
 
 /** Renders one capture. The service owns page validity, selection, bitmap lifetime and all work. */
 final class CandidatePanel extends LinearLayout {
-    private final BiConsumer<String, Boolean> onSelection;
+    private final BiConsumer<List<String>, Boolean> onSelection;
     private final TextView status;
     private final TextView summary;
     private final TextView selectedText;
@@ -27,11 +32,16 @@ final class CandidatePanel extends LinearLayout {
     private final ImageView image;
     private final Button imageToggle;
     private final TranslationPanel translation;
+    private final Map<String, CheckBox> fragmentBoxes = new HashMap<>();
+    private final List<GroupToggle> groupToggles = new ArrayList<>();
+    private boolean updatingGroups;
 
-    CandidatePanel(Context context, List<TextFragment> nodes, String diagnostics,
-                   BiConsumer<String, Boolean> onSelection,
+    CandidatePanel(Context context, List<TextFragment> nodes, List<MessageGrouper.SelectionGroup> groups,
+                   String diagnostics,
+                   BiConsumer<List<String>, Boolean> onSelection,
                    BiFunction<Boolean, StyleProfile, TranslationRequest> prepareRequest,
-                   BiConsumer<TranslationRequest, String> sendRequest, Runnable cancelRequest) {
+                   BiConsumer<TranslationRequest, String> sendRequest, Runnable cancelRequest,
+                   BiConsumer<TranslationRequest, TranslationResult> showNearby) {
         super(context);
         this.onSelection = onSelection;
         setOrientation(VERTICAL);
@@ -41,19 +51,26 @@ final class CandidatePanel extends LinearLayout {
         addView(summary);
         selectedText = label("", 17);
         addCollapsible("已选原文", selectedText);
-        translation = new TranslationPanel(context, prepareRequest, sendRequest, cancelRequest);
+        translation = new TranslationPanel(context, prepareRequest, sendRequest, cancelRequest, showNearby);
         addView(translation);
 
         addView(label("节点文字 · 默认不选", 17));
+        Map<String, MessageGrouper.SelectionGroup> groupStarts = new HashMap<>();
+        for (var group : groups) groupStarts.put(group.fragmentIds().get(0), group);
+        Set<String> groupedIds = new HashSet<>();
+        for (var group : groups) groupedIds.addAll(group.fragmentIds());
+        LinearLayout individual = column();
         LinearLayout auxiliary = column();
         int mainCount = 0;
         for (TextFragment fragment : nodes) {
+            if (groupStarts.containsKey(fragment.id)) addGroup(groupStarts.get(fragment.id));
             boolean secondary = fragment.role == Role.METADATA || fragment.role == Role.CONTROL
                     || fragment.role == Role.MEDIA_CANDIDATE;
-            addCandidate(secondary ? auxiliary : this, fragment);
+            addCandidate(secondary ? auxiliary : groupedIds.contains(fragment.id) ? individual : this, fragment);
             if (!secondary) mainCount++;
         }
         if (mainCount == 0) addView(label("没有正文节点候选，可核对下方辅助信息或图片文字。", 15));
+        if (!groups.isEmpty()) addCollapsible("逐片段调整（可取消组内某一行）", individual);
         if (auxiliary.getChildCount() > 0) addCollapsible("辅助信息（仅当确为正文时勾选）", auxiliary);
 
         status = label("图片识别准备中…", 15);
@@ -112,7 +129,12 @@ final class CandidatePanel extends LinearLayout {
         box.setText(fragment.rawText);
         box.setTextSize(17);
         box.setTextColor(Color.BLACK);
-        box.setOnCheckedChangeListener((button, checked) -> onSelection.accept(fragment.id, checked));
+        fragmentBoxes.put(fragment.id, box);
+        box.setOnCheckedChangeListener((button, checked) -> {
+            if (updatingGroups) return;
+            onSelection.accept(List.of(fragment.id), checked);
+            updateGroups();
+        });
         parent.addView(box);
         String source = switch (fragment.source) {
             case NODE_TEXT -> "节点文字";
@@ -130,6 +152,43 @@ final class CandidatePanel extends LinearLayout {
         if (fragment.warnings.contains("NODE_TRAVERSAL_TRUNCATED")) source += " · 读取达到上限";
         parent.addView(label(source, 13));
     }
+
+    private void addGroup(MessageGrouper.SelectionGroup group) {
+        CheckBox box = new CheckBox(getContext());
+        box.setTextColor(Color.BLACK);
+        box.setTextSize(17);
+        box.setText("整组选择 · " + group.fragmentIds().size() + " 段（请核对）\n" + group.text());
+        groupToggles.add(new GroupToggle(group, box));
+        box.setOnCheckedChangeListener((button, checked) -> {
+            if (updatingGroups) return;
+            updatingGroups = true;
+            try {
+                for (String id : group.fragmentIds()) {
+                    CheckBox fragment = fragmentBoxes.get(id);
+                    if (fragment != null) fragment.setChecked(checked);
+                }
+            } finally { updatingGroups = false; }
+            // Child checkboxes are now consistent. Notify the service once for the entire edit.
+            onSelection.accept(group.fragmentIds(), checked);
+            updateGroups();
+        });
+        addView(box);
+    }
+
+    private void updateGroups() {
+        updatingGroups = true;
+        try {
+            for (GroupToggle toggle : groupToggles) {
+                long count = toggle.group.fragmentIds().stream()
+                        .filter(id -> fragmentBoxes.containsKey(id) && fragmentBoxes.get(id).isChecked()).count();
+                toggle.box.setChecked(count == toggle.group.fragmentIds().size());
+                toggle.box.setText("整组选择 · 已选 " + count + "/" + toggle.group.fragmentIds().size()
+                        + " 段（请核对）\n" + toggle.group.text());
+            }
+        } finally { updatingGroups = false; }
+    }
+
+    private record GroupToggle(MessageGrouper.SelectionGroup group, CheckBox box) { }
 
     private Button addCollapsible(String title, View content) {
         Button toggle = new Button(getContext());

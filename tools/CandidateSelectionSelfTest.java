@@ -17,6 +17,7 @@ public final class CandidateSelectionSelfTest {
         explicitRoleOverride();
         sourceWarningsAndTruncation();
         rejectMalformedIdentity();
+        atomicGroupSelection();
         System.out.println("CandidateSelectionSelfTest PASS (" + checks + " checks)");
     }
 
@@ -129,6 +130,34 @@ public final class CandidateSelectionSelfTest {
                 "same numeric IDs cannot authorize another package");
         check(!state.setSelected(new PageToken(1, "test.app", 8, 10), "n", true),
                 "same package cannot authorize another window");
+    }
+
+    private static void atomicGroupSelection() {
+        var state = new CandidateSelection();
+        var a = node("a", "ありがとう～", new Bounds(0, 10, 100, 30), Role.BODY);
+        var b = node("b", "またね💗", new Bounds(0, 40, 100, 60), Role.BODY);
+        state.open(PAGE, List.of(a, b));
+        check(!state.setSelected(PAGE, List.of("a", "missing"), true), "unknown batch ID rejects whole update");
+        check(state.request(PAGE, null).isEmpty(), "rejected group leaves no partial selection");
+        check(state.setSelected(PAGE, List.of("b", "a", "a"), true), "batch selects once despite duplicate IDs");
+        check(state.selectedText().equals("ありがとう～\nまたね💗"), "batch preserves reading order and symbols");
+        check(!state.setSelected(PAGE, List.of("a", "b"), true), "unchanged batch needs no refresh");
+        check(!state.setSelected(PAGE, "a", true), "unchanged individual selection needs no refresh");
+        check(state.setSelected(PAGE, "a", false), "individual deselection remains available");
+        check(state.selectedText().equals("またね💗"), "partial group retains the other line");
+        check(state.setSelected(PAGE, List.of("a", "b"), true), "whole group restores a partial selection");
+        check(state.appendOcr(PAGE, List.of(TextAssembly.ocr("ocr:1", "画像", null, 0))), "OCR can arrive after batch");
+        check(state.request(PAGE, null).orElseThrow().messages.size() == 2, "OCR does not change selected group");
+        check(!state.setSelected(PAGE, List.of("a", "missing"), false), "invalid deselection is atomic too");
+        check(state.request(PAGE, null).orElseThrow().messages.size() == 2, "invalid deselection changes nothing");
+        check(!state.setSelected(PAGE, List.of(), true), "empty group needs no refresh");
+        check(state.setSelected(PAGE, List.of("a", "b"), false), "whole group can be cleared");
+        check(state.request(PAGE, null).isEmpty(), "batch deselection clears request");
+        state.open(NEXT, List.of(a, b));
+        check(!state.setSelected(PAGE, List.of("a", "b"), true), "old batch cannot select reused IDs on new page");
+        check(state.request(NEXT, null).isEmpty(), "late group leaves new page unselected");
+        state.clear();
+        check(!state.setSelected(NEXT, List.of("a", "b"), true), "closed card refuses late group update");
     }
 
     private static TextFragment node(String id, String raw, Bounds bounds, Role role) {

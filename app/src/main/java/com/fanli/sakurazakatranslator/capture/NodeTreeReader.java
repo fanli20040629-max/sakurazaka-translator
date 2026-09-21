@@ -58,7 +58,8 @@ public final class NodeTreeReader {
             nodes.add(new NodeRecord(id, parentId, childIndex, index, node.getWindowId(),
                     raw(node.getText()), raw(node.getContentDescription()), raw(node.getClassName()),
                     node.getViewIdResourceName(), bounds(screen), bounds(window),
-                    node.isVisibleToUser(), node.isClickable(), node.getCollectionItemInfo() != null));
+                    node.isVisibleToUser(), node.isClickable(), node.getCollectionItemInfo() != null,
+                    node.getCollectionInfo() != null));
             int childCount = node.getChildCount();
             for (int child = 0; child < childCount; child++) {
                 visit(node.getChild(child), depth + 1, id, child);

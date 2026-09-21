@@ -1,8 +1,8 @@
 param(
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$SdkRoot = $env:ANDROID_SDK_ROOT,
-    [int]$ExpectedVersionCode = 6,
-    [string]$ExpectedVersionName = '0.5.0-translation-trial'
+    [int]$ExpectedVersionCode = 7,
+    [string]$ExpectedVersionName = '0.6.0-bubble-trial'
 )
 
 $ErrorActionPreference = 'Stop'

@@ -12,22 +12,24 @@ final class TranslationPanel extends LinearLayout {
     private final BiFunction<Boolean, StyleProfile, TranslationRequest> prepareRequest;
     private final Runnable cancelRequest;
     private final CheckBox grouping;
-    private final Button prepare, send;
+    private final Button prepare, send, nearby;
     private final LinearLayout confirmation;
     private final TextView original, output;
     private TranslationRequest confirmed;
     private String model;
     private boolean hasSelection;
     private boolean busy;
+    private TranslationResult translated;
 
     TranslationPanel(Context context, BiFunction<Boolean, StyleProfile, TranslationRequest> prepareRequest,
-                     BiConsumer<TranslationRequest, String> sendRequest, Runnable cancelRequest) {
+                     BiConsumer<TranslationRequest, String> sendRequest, Runnable cancelRequest,
+                     BiConsumer<TranslationRequest, TranslationResult> showNearby) {
         super(context);
         this.prepareRequest = prepareRequest;
         this.cancelRequest = cancelRequest;
         setOrientation(VERTICAL);
         grouping = new CheckBox(context);
-        grouping.setText("按节点结构建议合并（可取消，逐片段翻译）");
+        grouping.setText("按聊天列表结构合并（可取消，逐片段翻译）");
         grouping.setChecked(true);
         grouping.setOnCheckedChangeListener((button, checked) -> invalidateTranslation());
         addView(grouping);
@@ -58,6 +60,11 @@ final class TranslationPanel extends LinearLayout {
             output.setText("已取消显示。已经发出的请求可能仍由服务商处理或计费。");
         });
         addView(output);
+        nearby = button("贴近原文显示");
+        nearby.setVisibility(GONE);
+        nearby.setOnClickListener(v -> {
+            if (confirmed != null && translated != null) showNearby.accept(confirmed, translated);
+        });
     }
 
     void setHasSelection(boolean value) {
@@ -97,6 +104,8 @@ final class TranslationPanel extends LinearLayout {
         cancelRequest.run();
         busy = false;
         confirmed = null;
+        translated = null;
+        nearby.setVisibility(GONE);
         confirmation.setVisibility(GONE);
         original.setText("");
         output.setText("");
@@ -106,6 +115,8 @@ final class TranslationPanel extends LinearLayout {
     void showResult(TranslationRequest request, TranslationResult result) {
         if (confirmed != request) return;
         busy = false;
+        translated = result;
+        nearby.setVisibility(VISIBLE);
         StringBuilder text = new StringBuilder("中文译文（请对照含义和语气；原文表情缺失无法自动恢复）\n");
         for (int i = 0; i < request.messages.size(); i++) {
             text.append("\n【").append(i + 1).append("】\n原文：")

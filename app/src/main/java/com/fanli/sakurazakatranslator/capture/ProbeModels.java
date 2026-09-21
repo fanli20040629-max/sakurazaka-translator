@@ -28,12 +28,20 @@ public final class ProbeModels {
         public final String id, parentId, rawText, rawDescription, className, viewId;
         public final int childIndex, traversalIndex, windowId;
         public final Bounds screenBounds, windowBounds;
-        public final boolean visible, clickable, collectionItem;
+        public final boolean visible, clickable, collectionItem, collection;
         public NodeRecord(String id, String parentId, int childIndex, int traversalIndex,
                           int windowId, String rawText, String rawDescription,
                           String className, String viewId, Bounds screenBounds,
                           Bounds windowBounds, boolean visible, boolean clickable,
                           boolean collectionItem) {
+            this(id, parentId, childIndex, traversalIndex, windowId, rawText, rawDescription,
+                    className, viewId, screenBounds, windowBounds, visible, clickable, collectionItem, false);
+        }
+        public NodeRecord(String id, String parentId, int childIndex, int traversalIndex,
+                          int windowId, String rawText, String rawDescription,
+                          String className, String viewId, Bounds screenBounds,
+                          Bounds windowBounds, boolean visible, boolean clickable,
+                          boolean collectionItem, boolean collection) {
             this.id = id; this.parentId = parentId; this.childIndex = childIndex;
             this.traversalIndex = traversalIndex; this.windowId = windowId;
             this.rawText = rawText; this.rawDescription = rawDescription;
@@ -41,6 +49,7 @@ public final class ProbeModels {
             this.screenBounds = screenBounds; this.windowBounds = windowBounds;
             this.visible = visible; this.clickable = clickable;
             this.collectionItem = collectionItem;
+            this.collection = collection;
         }
     }
 

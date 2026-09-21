@@ -10,8 +10,8 @@ android {
         applicationId = "com.fanli.sakurazakatranslator"
         minSdk = 34
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.5.0-translation-trial"
+        versionCode = 7
+        versionName = "0.6.0-bubble-trial"
     }
 
     buildTypes {

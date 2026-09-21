@@ -56,10 +56,13 @@ public final class CandidateSelection {
     public List<TextFragment> fragments() { return List.copyOf(candidates.values()); }
 
     public boolean setSelected(PageToken token, String id, boolean selected) {
-        if (!isCurrent(token) || !candidates.containsKey(id)) return false;
-        if (selected) selectedIds.add(id);
-        else selectedIds.remove(id);
-        return true;
+        return id != null && setSelected(token, List.of(id), selected);
+    }
+
+    /** Validate the whole group before changing anything; true means one refresh is needed. */
+    public boolean setSelected(PageToken token, List<String> ids, boolean selected) {
+        if (!isCurrent(token) || !candidates.keySet().containsAll(ids)) return false;
+        return selected ? selectedIds.addAll(ids) : selectedIds.removeAll(ids);
     }
 
     public String selectedText() {
