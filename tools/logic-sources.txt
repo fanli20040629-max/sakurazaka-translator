@@ -29,3 +29,14 @@ tools/CandidateSelectionSelfTest.java
 tools/MessageGroupingSelfTest.java
 app/src/main/java/com/fanli/sakurazakatranslator/capture/BubbleLayout.java
 tools/BubbleLayoutSelfTest.java
+app/src/main/java/com/fanli/sakurazakatranslator/capture/ReadingSession.java
+tools/ReadingSessionSelfTest.java
+app/src/main/java/com/fanli/sakurazakatranslator/capture/ReadingDemo.java
+app/src/main/java/com/fanli/sakurazakatranslator/capture/BodySelectionPolicy.java
+app/src/main/java/com/fanli/sakurazakatranslator/domain/LongMessageDraft.java
+app/src/main/java/com/fanli/sakurazakatranslator/capture/MemberResolver.java
+app/src/main/java/com/fanli/sakurazakatranslator/capture/MemberSession.java
+tools/BodySelectionPolicySelfTest.java
+tools/LongMessageDraftSelfTest.java
+tools/MemberResolverSelfTest.java
+tools/MemberSessionSelfTest.java

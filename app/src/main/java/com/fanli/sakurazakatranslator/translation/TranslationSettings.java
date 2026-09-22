@@ -9,6 +9,8 @@ import com.fanli.sakurazakatranslator.domain.StyleProfile;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
+import java.util.ArrayList;
+import java.util.List;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -16,6 +18,7 @@ import javax.crypto.spec.GCMParameterSpec;
 
 /** Stores profiles normally, API credentials only as Keystore-encrypted ciphertext. */
 public final class TranslationSettings {
+    public static final int MAX_PROFILES = 20;
     private static final String ALIAS = "sakurazaka.translation.key.v1";
     private final SharedPreferences preferences;
 
@@ -24,15 +27,31 @@ public final class TranslationSettings {
     }
 
     public String model() { return preferences.getString("model", "deepseek-chat"); }
-    public int selectedProfile() { return preferences.getInt("selected_profile", 0) == 1 ? 1 : 0; }
+    public int selectedProfile() {
+        return Math.max(0, Math.min(profileCount() - 1, preferences.getInt("selected_profile", 0)));
+    }
     public boolean hasKey() { return preferences.contains("key_ciphertext"); }
+    public boolean quickTranslation() { return preferences.getBoolean("quick_translation", false); }
 
     public StyleProfile profile(int index) {
-        String fallback = index == 0 ? "偶像一" : "偶像二";
+        String fallback = index == 0 ? "偶像一" : index == 1 ? "偶像二" : "成员档案 " + (index + 1);
+        String aliases = preferences.getString("profile_aliases_" + index, "");
         return new StyleProfile("idol-" + index,
                 preferences.getString("profile_name_" + index, fallback),
                 preferences.getString("profile_guidance_" + index,
-                        "自然口语，保留原文礼貌程度，不增加原文没有的亲密称呼。"));
+                        "自然口语，保留原文礼貌程度，不增加原文没有的亲密称呼。"),
+                aliases.lines().map(String::trim).filter(s -> !s.isEmpty()).toList());
+    }
+
+    private int profileCount() {
+        // Absence is the old two-profile format; loading never rewrites the user's data.
+        return Math.max(1, Math.min(MAX_PROFILES, preferences.getInt("profile_count", 2)));
+    }
+
+    public List<StyleProfile> profiles() {
+        List<StyleProfile> profiles = new ArrayList<>();
+        for (int i = 0; i < profileCount(); i++) profiles.add(profile(i));
+        return List.copyOf(profiles);
     }
 
     public String readKey() throws GeneralSecurityException, IOException {
@@ -45,10 +64,11 @@ public final class TranslationSettings {
     }
 
     /** Blank key preserves the existing credential. Removal is an explicit, separate action. */
-    public void save(String key, String model, int selected, StyleProfile[] profiles)
+    public void save(String key, String model, int selected, StyleProfile[] profiles, boolean quickTranslation)
             throws GeneralSecurityException, IOException {
         if (model == null || !model.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
-                || profiles.length != 2 || selected < 0 || selected > 1) {
+                || profiles == null || profiles.length < 1 || profiles.length > MAX_PROFILES
+                || selected < 0 || selected >= profiles.length) {
             throw new IllegalArgumentException("CONFIGURATION");
         }
         for (StyleProfile profile : profiles) {
@@ -57,10 +77,12 @@ public final class TranslationSettings {
             }
         }
         SharedPreferences.Editor editor = preferences.edit().putString("model", model)
-                .putInt("selected_profile", selected);
+                .putInt("profile_count", profiles.length).putInt("selected_profile", selected)
+                .putBoolean("quick_translation", quickTranslation);
         for (int i = 0; i < profiles.length; i++) {
             editor.putString("profile_name_" + i, profiles[i].displayName);
             editor.putString("profile_guidance_" + i, profiles[i].guidance);
+            editor.putString("profile_aliases_" + i, String.join("\n", profiles[i].aliases));
         }
         if (key != null && !key.isBlank()) {
             if (key.length() > 512 || key.chars().anyMatch(c -> c < 33 || c > 126)) {

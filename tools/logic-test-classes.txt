@@ -9,3 +9,8 @@ com.fanli.sakurazakatranslator.domain.TranslationTrialSelfTest
 com.fanli.sakurazakatranslator.translation.TranslationRunnerSelfTest
 com.fanli.sakurazakatranslator.capture.MessageGroupingSelfTest
 com.fanli.sakurazakatranslator.capture.BubbleLayoutSelfTest
+com.fanli.sakurazakatranslator.capture.ReadingSessionSelfTest
+com.fanli.sakurazakatranslator.capture.BodySelectionPolicySelfTest
+com.fanli.sakurazakatranslator.domain.LongMessageDraftSelfTest
+com.fanli.sakurazakatranslator.capture.MemberResolverSelfTest
+com.fanli.sakurazakatranslator.capture.MemberSessionSelfTest

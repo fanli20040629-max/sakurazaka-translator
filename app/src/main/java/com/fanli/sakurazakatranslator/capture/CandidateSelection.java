@@ -54,6 +54,26 @@ public final class CandidateSelection {
     }
 
     public List<TextFragment> fragments() { return List.copyOf(candidates.values()); }
+    public Set<String> selectedIds() { return Set.copyOf(selectedIds); }
+
+    /** Eligibility only, never consent. Called once after recommendations, not on OCR or selection edits. */
+    public boolean canQuickTranslate() {
+        if (page == null || selectedIds.isEmpty() || selectedIds.size() > 24) return false;
+        int length = 0;
+        for (TextFragment fragment : candidates.values()) {
+            boolean selected = selectedIds.contains(fragment.id);
+            if (selected) {
+                if (fragment.source != ProbeModels.Source.NODE_TEXT || fragment.role != ProbeModels.Role.BODY
+                        || !fragment.warnings.isEmpty()) return false;
+                length += fragment.rawText.length();
+                if (length > 6000) return false;
+            } else if (fragment.source != ProbeModels.Source.OCR
+                    && (fragment.role == ProbeModels.Role.BODY || fragment.role == ProbeModels.Role.UNKNOWN)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     public boolean setSelected(PageToken token, String id, boolean selected) {
         return id != null && setSelected(token, List.of(id), selected);

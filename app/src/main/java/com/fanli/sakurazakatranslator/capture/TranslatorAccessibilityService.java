@@ -43,6 +43,8 @@ import com.fanli.sakurazakatranslator.capture.NodeTreeReader.NodeReport;
 import com.fanli.sakurazakatranslator.domain.StyleProfile;
 import com.fanli.sakurazakatranslator.domain.TranslationRequest;
 import com.fanli.sakurazakatranslator.domain.TranslationResult;
+import com.fanli.sakurazakatranslator.domain.LongMessageDraft;
+import com.fanli.sakurazakatranslator.domain.ChatMessage;
 
 import java.util.List;
 import java.util.Locale;
@@ -57,6 +59,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private final ExecutorService screenshotExecutor = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final Runnable retainedMemberCheck = this::checkRetainedMember;
     private final TranslationRunner translationRunner = new TranslationRunner(command -> main.post(command));
     private final Object lifecycleLock = new Object();
     private final OcrProcessor ocrProcessor = new OcrProcessor();
@@ -69,7 +72,11 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     private Button trigger;
     private LinearLayout preview;
     private CandidatePanel candidatePanel;
-    private BubbleTranslationOverlay bubbleOverlay;
+    private TranslationReadingOverlay readingOverlay;
+    private final LongMessageDraft longMessageDraft = new LongMessageDraft();
+    private final MemberSession memberSession = new MemberSession();
+    private MemberResolver.Resolution previewMember = new MemberResolver.Resolution(
+            MemberResolver.Status.MISSING, null, "", null, java.util.Set.of());
     private Bounds previewWindowBounds;
     private PageToken previewPage;
     private List<NodeRecord> previewNodes = List.of();
@@ -99,7 +106,11 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     @Override protected void onServiceConnected() {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-        bubbleOverlay = new BubbleTranslationOverlay(this, windowManager);
+        readingOverlay = new TranslationReadingOverlay(this, windowManager, this::capture,
+                visible -> {
+                    if (trigger != null) trigger.setVisibility(visible ? View.GONE : View.VISIBLE);
+                    updateTriggerLabel();
+                });
         keyguardManager = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
         AccessibilityServiceInfo info = getServiceInfo();
         if (info != null) {
@@ -123,10 +134,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         String eventPackage = event.getPackageName() == null
                 ? null : event.getPackageName().toString();
         // Our synthetic page shares the package, but not the registered overlay window IDs.
-        if (ProbeLogic.isOwnedWindowEvent(getPackageName().equals(eventPackage),
-                event.getWindowId(), overlayWindowId, triggerWindowId)
-                || (getPackageName().equals(eventPackage) && bubbleOverlay != null
-                    && bubbleOverlay.ownsWindow(event.getWindowId()))) {
+        if (getPackageName().equals(eventPackage) && ownsOverlayWindow(event.getWindowId())) {
             refreshTriggerVisibility();
             return;
         }
@@ -134,9 +142,13 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             WindowSnapshot active = activeApplication();
             updateForegroundIdentity(active);
             boolean sameWindow = active != null && event.getWindowId() == active.windowId;
-            if (active != null && sameWindow && isAllowedPackage(active.packageName)) {
+            boolean windowGeometryChanged = event.getEventType() == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                    && (event.getWindowChanges() & AccessibilityEvent.WINDOWS_CHANGE_BOUNDS) != 0;
+            if (active != null && sameWindow && isAllowedPackage(active.packageName)
+                    && (event.getEventType() != AccessibilityEvent.TYPE_WINDOWS_CHANGED || windowGeometryChanged)) {
                 markPageChanged();
-            } else if (preview != null && event.getWindowId() < 0) {
+            } else if (preview != null && event.getWindowId() < 0
+                    && event.getEventType() != AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
                 // Unknown origin is not proof that an event belongs to the card.
                 markPageChanged();
             }
@@ -184,10 +196,18 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             return null;
         }
         if (windows == null) return null;
+        boolean ownedOverlayActive = windows.stream().anyMatch(window -> window.isActive()
+                && window.getType() == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY
+                && ownsOverlayWindow(window.getId()));
+        // A touched overlay can be active while the target application is still focused underneath.
+        // Choose the highest application, never an arbitrary older allowed window behind another app.
+        AccessibilityWindowInfo highest = windows.stream()
+                .filter(window -> window.getType() == AccessibilityWindowInfo.TYPE_APPLICATION)
+                .max(java.util.Comparator.comparingInt(AccessibilityWindowInfo::getLayer)).orElse(null);
         for (AccessibilityWindowInfo window : windows) {
-            if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION || !window.isActive()) {
-                continue;
-            }
+            if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+            if (!window.isActive() && !(ownedOverlayActive && highest != null
+                    && window.getId() == highest.getId() && window.getId() == foregroundWindowId)) continue;
             AccessibilityNodeInfo root = window.getRoot();
             if (root == null) continue;
             try {
@@ -200,6 +220,13 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             }
         }
         return null;
+    }
+
+    private boolean ownsOverlayWindow(int id) {
+        return id >= 0 && (id == overlayWindowId || id == triggerWindowId
+                || (preview != null && preview.getAccessibilityWindowId() == id)
+                || (trigger != null && trigger.getAccessibilityWindowId() == id)
+                || (readingOverlay != null && readingOverlay.ownsWindow(id)));
     }
 
     private void updateForegroundIdentity(WindowSnapshot active) {
@@ -215,6 +242,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             pageEpoch++;
             captureCoordinator.invalidate();
             removePreview();
+            clearRetainedContent();
         }
     }
 
@@ -222,14 +250,29 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         pageEpoch++;
         captureCoordinator.invalidate();
         removePreview();
+        if (readingOverlay != null) readingOverlay.markStale();
+        updateTriggerLabel();
+        // Coalesce event bursts without postponing the check indefinitely during scrolling.
+        if ((!longMessageDraft.isEmpty() || (readingOverlay != null && readingOverlay.hasResult()))
+                && !main.hasCallbacks(retainedMemberCheck)) main.postDelayed(retainedMemberCheck, 200);
+    }
+
+    private void checkRetainedMember() {
+        if (destroyed || isLocked()) return;
+        WindowSnapshot active = activeApplication();
+        if (active == null || !isAllowedPackage(active.packageName)
+                || active.windowId != foregroundWindowId
+                || !active.packageName.equals(foregroundPackage)) return;
+        // Missing titles during scrolling preserve the draft. Only reliable changes clear it.
+        if (memberSession.observe(readCurrentMember(active.windowId))) clearRetainedContent();
     }
 
     private void showTrigger() {
         if (trigger != null || destroyed || windowManager == null || isLocked()) return;
         Button candidate = new Button(this);
-        candidate.setText("取字探针");
+        candidate.setText("翻译当前屏");
         candidate.setTextColor(Color.WHITE);
-        candidate.setBackgroundColor(Color.rgb(40, 90, 160));
+        candidate.setBackgroundColor(Color.rgb(161, 64, 111));
         WindowManager.LayoutParams params = overlayParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -237,22 +280,32 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         params.y = dp(72);
         params.x = Math.max(0, getResources().getDisplayMetrics().widthPixels - dp(132));
         enableDrag(candidate, candidate, params, () -> {
-            if (bubbleOverlay != null && bubbleOverlay.isShowing()) restoreFullCard();
-            else capture();
-        }, () -> {
-            // Nearby labels reserve the old button position. Return locally before moving it.
-            if (bubbleOverlay != null && bubbleOverlay.isShowing()) restoreFullCard();
-        });
+            if (readingOverlay != null && readingOverlay.hasResult() && !readingOverlay.isStale()) {
+                if (!readingOverlay.reopen()) {
+                    readingOverlay.clear();
+                    updateTriggerLabel();
+                    toast("阅读卡片暂时无法打开，请重新点浮窗取字。");
+                }
+            } else capture();
+        }, null);
         try {
             windowManager.addView(candidate, params);
             trigger = candidate;
             AccessibilityNodeInfo triggerNode = candidate.createAccessibilityNodeInfo();
             triggerWindowId = triggerNode == null ? -1 : triggerNode.getWindowId();
+            updateTriggerLabel();
+            if (readingOverlay != null && readingOverlay.isShowing()) trigger.setVisibility(View.GONE);
         } catch (RuntimeException ignored) {
             safeRemove(candidate);
             trigger = null;
             triggerWindowId = -1;
         }
+    }
+
+    private void updateTriggerLabel() {
+        if (trigger == null) return;
+        trigger.setText(readingOverlay != null && readingOverlay.hasResult() && !readingOverlay.isStale() ? "打开译文"
+                : !longMessageDraft.isEmpty() ? "补取这一屏" : "翻译当前屏");
     }
 
     private void removeTrigger() {
@@ -273,7 +326,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         if (windows == null) return null;
         for (AccessibilityWindowInfo window : windows) {
             if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION
-                    || !window.isActive() || window.getId() != active.windowId) {
+                    || window.getId() != active.windowId) {
                 continue;
             }
             AccessibilityNodeInfo root = window.getRoot();
@@ -288,6 +341,10 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     private void capture() {
+        main.removeCallbacks(retainedMemberCheck);
+        // Hide our reading window before taking a new snapshot; completed translations remain local only.
+        if (readingOverlay != null) readingOverlay.clear();
+        updateTriggerLabel();
         if (destroyed || isLocked()) {
             toast("设备已锁定，探针已暂停");
             return;
@@ -332,6 +389,16 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         }
 
         try {
+            MemberResolver.Resolution member = MemberResolver.resolve(
+                    nodeReport.nodes, previewWindowBounds, new TranslationSettings(this).profiles(),
+                    nodeReport.truncated);
+            if (memberSession.observe(member)) {
+                readingOverlay.clear();
+                longMessageDraft.clear();
+                memberSession.clearDraft();
+            }
+            memberSession.begin(page, member);
+            previewMember = member;
             if (!showNodePreview(page, nodeReport, startedAt)) {
                 captureCoordinator.finishPhysical(requestId);
                 maybeShutdown();
@@ -472,11 +539,23 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         params.y = dp(36);
         addHeader(card, "原文整理 · " + BuildConfig.VERSION_NAME, this::closePreview, params);
 
-        candidateSelection.open(page, report.fragments);
+        List<TextFragment> fragments = report.fragments.stream().map(fragment -> {
+            Bounds b = fragment.bounds;
+            boolean clipped = b == null || previewWindowBounds == null || b.isEmpty()
+                    || b.top <= previewWindowBounds.top + 2 || b.bottom >= previewWindowBounds.bottom - 2;
+            return clipped ? fragment.withWarning("POSSIBLY_CLIPPED") : fragment;
+        }).toList();
+        candidateSelection.open(page, fragments);
+        List<String> recommended = BodySelectionPolicy.recommended(fragments, report.nodes).stream()
+                .filter(id -> fragments.stream().filter(fragment -> fragment.id.equals(id)).noneMatch(fragment ->
+                        fragment.provenance.stream().anyMatch(provenance -> previewMember.nodeIds().stream()
+                                .anyMatch(nodeId -> provenance.startsWith(nodeId + ":")))))
+                .toList();
+        candidateSelection.setSelected(page, recommended, true);
         previewNodes = report.nodes;
         previewPage = page;
-        candidatePanel = new CandidatePanel(this, report.fragments,
-                MessageGrouper.selectionGroups(report.fragments, report.nodes),
+        candidatePanel = new CandidatePanel(this, fragments,
+                MessageGrouper.selectionGroups(fragments, report.nodes),
                 String.format(Locale.ROOT,
                         "版本=%s / %d\n请求=%d · windowId=%d · pageEpoch=%d\n"
                                 + "节点=%d · 候选=%d · 节点阶段=%dms\n%s\n"
@@ -500,7 +579,36 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 (group, style) -> prepareTranslation(page, group, style),
                 (request, model) -> sendTranslation(page, request, model),
                 this::cancelTranslationDisplay,
-                (request, result) -> showNearby(page, request, result));
+                (request, result) -> showReading(page, request, result),
+                new CandidatePanel.LongMessageActions() {
+                    public String text() { return longMessageDraft.text(); }
+                    public String appendSelection() { return appendLongMessage(page); }
+                    public TranslationRequest prepare(StyleProfile style) {
+                        if (!selectionAllowed(page) || longMessageDraft.isEmpty()
+                                || !memberMatchesCurrentPage(page)
+                                || !memberSession.canAppendDraft(page)) return null;
+                        return TranslationRequestFactory.confirmed(page, List.of(longMessageDraft.message()), style);
+                    }
+                    public void clear() { longMessageDraft.clear(); memberSession.clearDraft(); updateTriggerLabel(); }
+                    public void continueCapture() { closePreview(); updateTriggerLabel(); }
+                }, previewMember, new TranslationSettings(this).profiles(),
+                new TranslationSettings(this).selectedProfile(),
+                () -> memberSession.style(page), profile -> {
+                    StyleProfile previous = memberSession.style(page);
+                    memberSession.choose(page, profile);
+                    if (previous != null && !previous.id.equals(profile.id)) {
+                        memberSession.clearDraft();
+                        longMessageDraft.clear();
+                        updateTriggerLabel();
+                    }
+                });
+        if (getPackageName().equals(page.packageName()) && ProbePreferences.syntheticMode(this)) {
+            candidatePanel.addLocalReadingDemo(() -> {
+                if (selectionAllowed(page) && ProbePreferences.syntheticMode(this)) {
+                    showReading(page, ReadingDemo.request(page), ReadingDemo.result());
+                }
+            });
+        }
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(candidatePanel);
@@ -513,6 +621,11 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             AccessibilityNodeInfo cardNode = card.createAccessibilityNodeInfo();
             overlayWindowId = cardNode == null ? -1 : cardNode.getWindowId();
             captureCoordinator.show(page.requestId());
+            updateSelection(page);
+            // One opt-in attempt per explicit capture. Never triggered by OCR completion or page events.
+            if (longMessageDraft.isEmpty() && memberSession.canQuickTranslate(page)
+                    && candidateSelection.canQuickTranslate()
+                    && new TranslationSettings(this).quickTranslation()) candidatePanel.quickTranslate();
             return true;
         } catch (RuntimeException error) {
             closePreview();
@@ -537,21 +650,62 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     private void updateSelection(PageToken page) {
         if (!selectionAllowed(page)) return;
         pendingTranslationRequest = candidateSelection.request(page, DEFAULT_STYLE).orElse(null);
-        candidatePanel.showSelection(candidateSelection.selectedText(), pendingTranslationRequest);
+        candidatePanel.showSelection(candidateSelection.selectedText(), pendingTranslationRequest,
+                candidateSelection.selectedIds());
     }
 
     private TranslationRequest prepareTranslation(PageToken page, boolean group, StyleProfile style) {
-        if (!selectionAllowed(page)) return null;
+        if (!selectionAllowed(page) || style == null || !memberMatchesCurrentPage(page)) return null;
         TranslationRequest request = candidateSelection.request(page, style).orElse(null);
-        if (request == null || !group) return request;
-        return TranslationRequestFactory.confirmed(page,
-                MessageGrouper.group(request.messages, previewNodes), style);
+        if (request == null) return null;
+        List<ChatMessage> messages = group ? MessageGrouper.group(request.messages, previewNodes) : request.messages;
+        messages = messages.stream().map(message -> {
+            if (!BodySelectionPolicy.possiblyClipped(message, previewWindowBounds)
+                    || message.warnings.contains("POSSIBLY_CLIPPED")) return message;
+            var warnings = new java.util.ArrayList<>(message.warnings);
+            warnings.add("POSSIBLY_CLIPPED");
+            return new ChatMessage(message.id, message.originalText, message.source,
+                    message.left, message.top, message.right, message.bottom, message.coordinateSpace,
+                    message.provenance, warnings);
+        }).toList();
+        return TranslationRequestFactory.confirmed(page, messages, style);
     }
 
-    /** A button press on the visible confirmation is the only network entry point. */
+    private String appendLongMessage(PageToken page) {
+        TranslationRequest request = prepareTranslation(page, true, memberSession.style(page));
+        if (request == null) return "请先选择本屏中该长消息的文字。";
+        if (!memberSession.canAppendDraft(page)) {
+            return longMessageDraft.isEmpty()
+                    ? "当前成员身份未确认，不能开始长文草稿。请先确认本页成员。"
+                    : "当前成员身份未确认，不能拼接旧长文草稿。请清除旧草稿后重新收集。";
+        }
+        final ChatMessage part;
+        try {
+            // Multiple OCR lines are combined only after the explicit same-message checkbox.
+            part = LongMessageDraft.selectedPart(request.messages);
+        } catch (IllegalArgumentException error) {
+            return "本次选中了多条或边界不明的片段。请只选一条节点消息，或同一条消息按顺序排列的 OCR 行。";
+        }
+        LongMessageDraft.Outcome outcome = longMessageDraft.append(page, part);
+        if (outcome == LongMessageDraft.Outcome.STARTED) memberSession.bindDraft(page);
+        updateTriggerLabel();
+        return switch (outcome) {
+            case STARTED -> "已开始收集。请核对从消息开头开始；可收起并滚动补取下一屏。";
+            case APPENDED -> "已合并 " + longMessageDraft.parts() + " 屏，请核对草稿。到结尾后勾选完整性确认，再准备翻译。";
+            case DUPLICATE -> "这段内容已经收集，没有重复追加。若节点已提供全文，可直接核对首尾后翻译。";
+            case WRONG_CONTEXT -> "窗口已变化，不能合并。请清除草稿后重新开始。";
+            case WRONG_SOURCE -> "两次来源不同，不能混合节点与 OCR。请用同一来源重新取字。";
+            case LIMIT -> "草稿达到 6000 字符或 12 屏上限，未追加。请分段翻译。";
+            case EMPTY -> "没有可加入的文字。";
+            case NO_OVERLAP -> "缺少明确且唯一的重叠，未追加。请向回滚一点，保留几行相同文字再取字。";
+        };
+    }
+
+    /** Only explicit confirmation or an explicit capture with saved quick-send consent can enter here. */
     private void sendTranslation(PageToken page, TranslationRequest request, String model) {
-        if (!selectionAllowed(page) || !page.equals(request.pageToken)) return;
         CandidatePanel owner = candidatePanel;
+        if (!selectionAllowed(page) || !page.equals(request.pageToken)) return;
+        if (!translationMemberReady(owner, page)) return;
         try {
             String key = new TranslationSettings(this).readKey();
             if (key.isBlank()) {
@@ -560,14 +714,39 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
             }
             boolean started = translationRunner.start(request, new DeepSeekProvider(key, model),
                     result -> {
-                        if (owner == candidatePanel && selectionAllowed(page)) owner.showTranslation(request, result);
+                        if (translationMemberReady(owner, page)) {
+                            owner.showTranslation(request, result);
+                            showReading(page, request, result);
+                        }
                     }, error -> {
-                        if (owner == candidatePanel && selectionAllowed(page)) owner.showTranslationFailure(error);
+                        if (translationMemberReady(owner, page)) owner.showTranslationFailure(error);
                     });
             if (!started) owner.showTranslationFailure("BUSY");
         } catch (Exception error) {
             owner.showTranslationFailure("CONFIGURATION");
         }
+    }
+
+    private void showReading(PageToken page, TranslationRequest request, TranslationResult result) {
+        if (!selectionAllowed(page) || !page.equals(request.pageToken) || readingOverlay == null) return;
+        if (readingOverlay.show(request, result)) {
+            closePreview();
+            updateTriggerLabel();
+        } else {
+            readingOverlay.clear();
+            updateTriggerLabel();
+            toast("阅读卡片暂时无法显示，译文保留在原文整理卡中。");
+        }
+    }
+
+    /** Every live card receives a terminal state, even when the title temporarily disappears. */
+    private boolean translationMemberReady(CandidatePanel owner, PageToken page) {
+        if (owner != candidatePanel || !selectionAllowed(page)) return false;
+        if (memberMatchesCurrentPage(page)) return true;
+        if (owner == candidatePanel && selectionAllowed(page)) {
+            owner.showTranslationFailure("MEMBER_UNCONFIRMED");
+        }
+        return false;
     }
 
     private boolean isCurrentPage(String packageName, int windowId, long epoch) {
@@ -578,45 +757,43 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 active.packageName, active.windowId, pageEpoch, isLocked());
     }
 
-    private void showNearby(PageToken page, TranslationRequest request, TranslationResult result) {
-        if (!selectionAllowed(page) || !page.equals(request.pageToken) || bubbleOverlay == null) return;
-        // Invisible keeps the registered card window and its confirmation intact for a local return.
-        preview.setVisibility(View.INVISIBLE);
-        if (trigger != null) trigger.setText("返回译文");
-        Bounds triggerBounds = null;
-        if (trigger != null) {
-            int[] location = new int[2];
-            trigger.getLocationOnScreen(location);
-            // Reserve enough room for either trigger label before its next layout pass.
-            triggerBounds = new Bounds(location[0], location[1],
-                    location[0] + Math.max(trigger.getWidth(), dp(132)), location[1] + trigger.getHeight());
+    /** Re-reads the current target title before preparing or displaying a paid result. */
+    private boolean memberMatchesCurrentPage(PageToken page) {
+        if (!selectionAllowed(page)) return false;
+        MemberResolver.Resolution fresh = readCurrentMember(page.windowId());
+        if (fresh == null) return false;
+        boolean capturedIdentityChanged = memberSession.reliableIdentityChanged(fresh);
+        boolean changed = memberSession.observe(fresh) || capturedIdentityChanged;
+        if (changed) {
+            markPageChanged();
+            clearRetainedContent();
+            toast("检测到聊天成员变化，请重新取字。");
+            return false;
         }
-        bubbleOverlay.show(request, result, previewNodes, previewWindowBounds, triggerBounds,
-                () -> selectionAllowed(page), () -> {
-                    if (page.equals(previewPage)) {
-                        invalidateAndClear(false);
-                        toast("显示区域已变化，请重新取字。");
-                    }
-                }, count -> {
-                    if (!selectionAllowed(page)) return;
-                    if (count == 0) {
-                        restoreFullCard();
-                        toast("附近空间或原文位置不足，请在完整卡片查看译文。");
-                    } else {
-                        toast("已贴近显示 " + count + " 条；其余请点“返回译文”查看。滑动页面后会清除。");
-                    }
-                });
+        return memberSession.matches(page, fresh);
     }
 
-    private void restoreFullCard() {
-        if (bubbleOverlay != null) bubbleOverlay.close();
-        if (trigger != null) trigger.setText("取字探针");
-        if (preview != null) preview.setVisibility(View.VISIBLE);
+    private MemberResolver.Resolution readCurrentMember(int windowId) {
+        AccessibilityWindowInfo target = targetWindow();
+        if (target == null || target.getId() != windowId) return null;
+        AccessibilityNodeInfo root = target.getRoot();
+        if (root == null) return null;
+        try {
+            Rect bounds = new Rect();
+            target.getBoundsInScreen(bounds);
+            NodeReport report = nodeReader.read(root);
+            return MemberResolver.resolve(report.nodes,
+                    new Bounds(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                    new TranslationSettings(this).profiles(), report.truncated);
+        } catch (RuntimeException error) {
+            return null;
+        } finally {
+            root.recycle();
+        }
     }
 
     private void cancelTranslationDisplay() {
         translationRunner.cancel();
-        restoreFullCard();
     }
 
     private boolean isPreviewScrollEvent(AccessibilityEvent event) {
@@ -646,14 +823,22 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         captureCoordinator.invalidate();
         pageEpoch++;
         removePreview();
+        clearRetainedContent();
         if (removeTrigger) removeTrigger();
         maybeShutdown();
     }
 
+    private void clearRetainedContent() {
+        main.removeCallbacks(retainedMemberCheck);
+        if (readingOverlay != null) readingOverlay.clear();
+        longMessageDraft.clear();
+        memberSession.clear();
+        updateTriggerLabel();
+    }
+
     private void removePreview() {
         translationRunner.cancel();
-        if (bubbleOverlay != null) bubbleOverlay.close();
-        if (trigger != null) trigger.setText("取字探针");
+        updateTriggerLabel();
         previewWindowBounds = null;
         if (candidatePanel != null) candidatePanel.releaseImage();
         if (preview != null && windowManager != null) safeRemove(preview);

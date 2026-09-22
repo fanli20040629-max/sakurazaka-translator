@@ -78,6 +78,10 @@ public final class MainActivity extends Activity {
 
         root.addView(text("以下是图片内文字。无障碍节点不应包含它，OCR 应识别它。", 15));
         root.addView(new JapaneseImageView(), new LinearLayout.LayoutParams(-1, dp(180)));
+        root.addView(text("跨屏长节点样本（虚构内容，核对是否能一次读到结尾）", 18));
+        addSyntheticMessage(root, 2, "ここから長いメッセージの始まりです。",
+                ("今日はリハーサルでした。いつも応援してくれてありがとう～💗\n\n").repeat(16)
+                        + "ここが最後です。おやすみなさい🌙");
         scroll.addView(root);
         setContentView(scroll);
     }

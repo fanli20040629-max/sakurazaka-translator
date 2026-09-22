@@ -18,7 +18,33 @@ public final class CandidateSelectionSelfTest {
         sourceWarningsAndTruncation();
         rejectMalformedIdentity();
         atomicGroupSelection();
+        quickTranslationRequiresCertainSelection();
         System.out.println("CandidateSelectionSelfTest PASS (" + checks + " checks)");
+    }
+
+    private static void quickTranslationRequiresCertainSelection() {
+        var body = new TextFragment("body", "こんにちは～", "こんにちは～", Source.NODE_TEXT,
+                Role.BODY, null, new Bounds(10, 100, 200, 140), List.of("body:text"),
+                List.of(), "test", false);
+        CandidateSelection state = new CandidateSelection();
+        state.open(PAGE, List.of(body));
+        check(!state.canQuickTranslate(), "no automatic request for empty selection");
+        state.setSelected(PAGE, "body", true);
+        check(state.canQuickTranslate(), "fully recommended clean node selection is eligible");
+        state.appendOcr(PAGE, List.of(TextAssembly.ocr("ocr", "こんにちは9", new Bounds(10, 10, 100, 50), 0)));
+        check(state.canQuickTranslate(), "unselected OCR cannot trigger another request or change eligibility");
+        state.setSelected(PAGE, "ocr", true);
+        check(!state.canQuickTranslate(), "mixed selected OCR requires confirmation");
+        state.open(NEXT, List.of(body.withWarning("POSSIBLY_CLIPPED")));
+        state.setSelected(NEXT, "body", true);
+        check(!state.canQuickTranslate(), "possibly clipped selection never quick sends");
+        state.open(NEXT, List.of(body, new TextFragment("title", "名前", "名前", Source.NODE_TEXT,
+                Role.BODY, null, new Bounds(10, 10, 200, 50), List.of("title:text"),
+                List.of(), "test", false)));
+        state.setSelected(NEXT, "body", true);
+        check(!state.canQuickTranslate(), "unresolved body candidate forces review");
+        state.clear();
+        check(!state.canQuickTranslate(), "closed state never quick sends");
     }
 
     private static void unicodeAndEvidence() {

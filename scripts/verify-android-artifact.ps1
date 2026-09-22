@@ -3,8 +3,8 @@ param(
     [string]$SdkRoot,
     [string]$BuildToolsVersion = '36.0.0',
     [string]$ExpectedPackage = 'com.fanli.sakurazakatranslator',
-    [int]$ExpectedVersionCode = 7,
-    [string]$ExpectedVersionName = '0.6.0-bubble-trial'
+    [int]$ExpectedVersionCode = 8,
+    [string]$ExpectedVersionName = '0.7.0-reading-card-trial'
 )
 
 $ErrorActionPreference = 'Stop'
