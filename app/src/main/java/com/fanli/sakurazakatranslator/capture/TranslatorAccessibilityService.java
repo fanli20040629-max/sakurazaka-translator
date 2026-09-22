@@ -224,8 +224,6 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
 
     private boolean ownsOverlayWindow(int id) {
         return id >= 0 && (id == overlayWindowId || id == triggerWindowId
-                || (preview != null && preview.getAccessibilityWindowId() == id)
-                || (trigger != null && trigger.getAccessibilityWindowId() == id)
                 || (readingOverlay != null && readingOverlay.ownsWindow(id)));
     }
 

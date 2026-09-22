@@ -266,3 +266,38 @@ Windows 构建、APK 身份核对、安装和当晚真机测试已经完成。�
 - 通过 USB 启动目标包 `jp.co.sonymusic.communication.sakurazaka`，窗口焦点切换到目标应用；返回助手后焦点恢复为 `com.fanli.sakurazakatranslator.MainActivity`。
 - 返回后无障碍服务仍已绑定，`Crashed services:{}`；未发现助手在非目标页面产生新的翻译卡片或崩溃。
 - 结论：目标应用范围过滤完成独立复核；未修改源码。
+
+## 2026-09-22 新版接手检查（无设备）
+
+- 源码身份：`4e7ab418aa99105135483d470d3712317337e6b9`；构建后工作区另有两处为编译修复产生的未提交源码差异。
+- ADB 命令：`D:\Android\Sdk\platform-tools\adb.exe devices -l`；实际结果仅有 `List of devices attached`，无设备行。
+- 结果：未执行安装、启动、无障碍服务、合成阅读卡、真实聊天、R/L/W/Q/I、缺 Key、成员切换、截图/XML 或真实 API 测试；均待设备连接并按授权条件人工/自动复核。
+- 本次可确认范围：离线桌面逻辑与 Android 构建通过，不等同于真机通过或真实 API 通过。构建 APK 本地证据：`app/build/outputs/apk/debug/app-debug.apk`，SHA-256 `8438C13C3729959B01F274FBBA57C73248A569954510815C8C64456751392C14`。
+
+## 2026-09-22 设备接入后复测
+
+- 设备：Samsung SM-S9060，ADB serial `RFCT51QPXEP`；未在文档记录序列号以外的私人设备信息。通过 `adb install -r` 覆盖安装新版 APK，未卸载、未清数据。设备端确认 `versionCode=8`、`versionName=0.7.0-reading-card-trial`。
+- 安装后系统关闭了无障碍服务；用户手动重新开启后，`dumpsys accessibility` 确认服务已启用且 `Crashed services:{}` 为空，应用进程正常。
+- 首页合成样本控件树和本地截图显示正常，合成测试复选框保持开启，浮动入口“翻译当前屏”出现。证据保留在本机临时目录 `C:\Users\FanLi\AppData\Local\Temp\sakurazaka-home.xml`、`sakura-current2.png`。
+- 通过 ADB 两次点击浮窗坐标并等待 OCR，候选卡未出现；无崩溃日志，服务仍绑定。ADB 点击不证明触摸响应，故取字/候选卡记为“未确认/待人工触摸”，未进入阅读卡、真实聊天或真实 API 测试。
+
+## 2026-09-22 单次真实 API 尝试
+
+- 用户在手机配置 API Key，并人工确认当前页面成员；候选卡保留一条短消息选择。仅点击一次“准备中文翻译”，未连续重试。
+- 应用日志出现 `api.deepseek.com` DNS 解析及 TCP 连接；应用进程和无障碍服务均未崩溃。未记录私人正文内容。
+- 请求后截图显示候选卡重新出现，但没有可确认的中文结果、HTTP 状态或服务端错误。证据保留在本机临时目录 `C:\Users\FanLi\AppData\Local\Temp\sakurazaka-after-prepare.png`、`sakurazaka-result.png`。
+- 结论：真实 API 请求已发起/产生网络连接；真实翻译结果未确认；未重试，避免重复计费。响应回调、结果卡片和阅读卡切换仍待验证。
+
+## 2026-09-22 最终真机结论与问题清单
+
+- 真机取字人工触摸后候选卡出现，标题为 `原文整理 · 0.7.0-reading-card-trial`，显示 20 个片段；候选初始未勾选，正文仍需手工选择。
+- 成员自动识别未达到预期：页面显示“尚未确认当前成员”，仍需人工选择/确认风格。人工确认后门禁解除，但不等于自动识别通过。
+- 界面需要美化：候选卡信息密度高，正文、作者、时间和 OCR 辅助信息混在同一滚动层；按钮层级不够清晰；浮窗/候选卡覆盖目标页面明显；触摸和 ADB 坐标操作存在不稳定或穿透风险。
+- 免 API 阅读卡入口虽存在源码，但本次真机候选卡中未稳定显示；阅读卡完整滚动、切换、展开/收起、关闭重取等未完成可靠验收。
+- 自动排除作者/时间/按钮、长文补取和真实 API 中文结果均未通过；未重复收费请求，未提交私人聊天内容、截图或 XML。
+
+## 2026-09-22 其余自动稳定性检查
+
+- ADB 冷启动助手、切换到目标 App、返回目标 App 后保持无障碍服务绑定；版本仍为 `0.7.0-reading-card-trial (8)`，`Crashed services:{}` 为空。未新增 DeepSeek 域名连接。
+- 通过 ADB 直接启动非 exported 的 `TranslationSettingsActivity` 被 Android 拒绝（`SecurityException: ... not exported`）；这是系统入口保护，不能作为应用崩溃，设置页需从应用首页按钮进入，未修改 Key 或设置数据。
+- 真机可自动完成的启动/切换/服务/崩溃范围已完成；候选卡触摸穿透、阅读卡滚动手感、视觉舒适度、真实 API 响应正文、成员风格是否主观合适仍需人工确认或已有页面再次操作。

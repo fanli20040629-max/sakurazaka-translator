@@ -58,7 +58,9 @@ final class TranslationReadingOverlay {
     boolean hasResult() { return session.hasResult(); }
     boolean isStale() { return session.isStale(); }
     boolean isShowing() { return card != null; }
-    boolean ownsWindow(int id) { return id >= 0 && windowRoot != null && windowRoot.getAccessibilityWindowId() == id; }
+    // Views do not expose an accessibility window id. The service tracks the
+    // ids of its own accessibility overlays separately.
+    boolean ownsWindow(int id) { return false; }
 
     boolean reopen() {
         if (!hasResult()) return false;
