@@ -21,6 +21,11 @@ public final class CandidateSelection {
     private boolean ocrReceived;
 
     public void open(PageToken token, List<TextFragment> nodes) {
+        open(token, nodes, Set.of());
+    }
+
+    /** Opens one capture and applies only the caller's high-confidence automatic selections. */
+    public void open(PageToken token, List<TextFragment> nodes, Set<String> autoSelectedIds) {
         Objects.requireNonNull(token, "pageToken");
         Map<String, TextFragment> next = index(nodes);
         if (next.values().stream().anyMatch(f -> f.source == ProbeModels.Source.OCR)) {
@@ -29,6 +34,15 @@ public final class CandidateSelection {
         clear();
         page = token;
         candidates.putAll(next);
+        if (autoSelectedIds != null) {
+            for (String id : autoSelectedIds) {
+                TextFragment fragment = candidates.get(id);
+                if (fragment != null && fragment.source == ProbeModels.Source.NODE_TEXT
+                        && fragment.role == ProbeModels.Role.BODY && fragment.warnings.isEmpty()) {
+                    selectedIds.add(id);
+                }
+            }
+        }
     }
 
     /** Exactly one OCR completion per capture. Append atomically, retaining selected node IDs. */

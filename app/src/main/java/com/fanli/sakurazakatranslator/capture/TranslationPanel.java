@@ -48,16 +48,21 @@ final class TranslationPanel extends LinearLayout {
         useDraft = new CheckBox(context);
         useDraft.setText("已核对长文草稿从开头到结尾完整，改用草稿翻译");
         addView(useDraft);
-        prepare = button("准备中文翻译");
+        prepare = button("翻译");
         prepare.setEnabled(false);
-        prepare.setOnClickListener(v -> prepare());
+        prepare.setOnClickListener(v -> {
+            prepare();
+            // Automatic recognition has already supplied the selection; one tap is the
+            // explicit network/charging confirmation. Manual corrections use the same path.
+            if (confirmed != null && send.isEnabled()) send.performClick();
+        });
         confirmation = new LinearLayout(context);
         confirmation.setOrientation(VERTICAL);
         original = label("");
         output = label("");
         confirmation.addView(original);
         send = new Button(context);
-        send.setText("确认：发送这些文字到 DeepSeek");
+        send.setText("发送这些文字到 DeepSeek");
         send.setOnClickListener(v -> {
             if (confirmed == null) return;
             busy = true;

@@ -543,13 +543,11 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                     || b.top <= previewWindowBounds.top + 2 || b.bottom >= previewWindowBounds.bottom - 2;
             return clipped ? fragment.withWarning("POSSIBLY_CLIPPED") : fragment;
         }).toList();
-        candidateSelection.open(page, fragments);
-        List<String> recommended = BodySelectionPolicy.recommended(fragments, report.nodes).stream()
-                .filter(id -> fragments.stream().filter(fragment -> fragment.id.equals(id)).noneMatch(fragment ->
-                        fragment.provenance.stream().anyMatch(provenance -> previewMember.nodeIds().stream()
-                                .anyMatch(nodeId -> provenance.startsWith(nodeId + ":")))))
-                .toList();
-        candidateSelection.setSelected(page, recommended, true);
+        List<String> memberNames = memberNamesFor(previewMember);
+        java.util.Set<String> autoSelected = previewMember.status() == MemberResolver.Status.MATCHED
+                ? MessageGrouper.autoSelectedIds(fragments, report.nodes, memberNames, page.windowId())
+                : java.util.Set.of();
+        candidateSelection.open(page, fragments, autoSelected);
         previewNodes = report.nodes;
         previewPage = page;
         candidatePanel = new CandidatePanel(this, fragments,
@@ -599,7 +597,7 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                         longMessageDraft.clear();
                         updateTriggerLabel();
                     }
-                });
+                }, autoSelected.size());
         if (getPackageName().equals(page.packageName()) && ProbePreferences.syntheticMode(this)) {
             candidatePanel.addLocalReadingDemo(() -> {
                 if (selectionAllowed(page) && ProbePreferences.syntheticMode(this)) {
@@ -650,6 +648,15 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         pendingTranslationRequest = candidateSelection.request(page, DEFAULT_STYLE).orElse(null);
         candidatePanel.showSelection(candidateSelection.selectedText(), pendingTranslationRequest,
                 candidateSelection.selectedIds());
+    }
+
+    private static List<String> memberNamesFor(MemberResolver.Resolution resolution) {
+        if (resolution == null || resolution.profile() == null) return List.of();
+        java.util.ArrayList<String> names = new java.util.ArrayList<>();
+        names.add(resolution.profile().displayName);
+        names.addAll(resolution.profile().aliases);
+        if (resolution.name() != null && !resolution.name().isBlank()) names.add(resolution.name());
+        return List.copyOf(names);
     }
 
     private TranslationRequest prepareTranslation(PageToken page, boolean group, StyleProfile style) {

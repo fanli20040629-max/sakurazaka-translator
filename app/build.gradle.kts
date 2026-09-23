@@ -10,8 +10,8 @@ android {
         applicationId = "com.fanli.sakurazakatranslator"
         minSdk = 34
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.7.0-reading-card-trial"
+        versionCode = 9
+        versionName = "0.8.0-auto-message-bottom-card"
     }
 
     buildTypes {

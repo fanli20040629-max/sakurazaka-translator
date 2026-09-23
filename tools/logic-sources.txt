@@ -16,6 +16,7 @@ app/src/main/java/com/fanli/sakurazakatranslator/domain/TranslationResult.java
 app/src/main/java/com/fanli/sakurazakatranslator/domain/TranslationValidator.java
 app/src/main/java/com/fanli/sakurazakatranslator/translation/SymbolProtector.java
 app/src/main/java/com/fanli/sakurazakatranslator/capture/MessageGrouper.java
+app/src/main/java/com/fanli/sakurazakatranslator/capture/MessageHeaderDetector.java
 tools/TranslationTrialSelfTest.java
 app/src/main/java/com/fanli/sakurazakatranslator/translation/TranslationRunner.java
 tools/TranslationRunnerSelfTest.java
@@ -36,6 +37,7 @@ app/src/main/java/com/fanli/sakurazakatranslator/capture/BodySelectionPolicy.jav
 app/src/main/java/com/fanli/sakurazakatranslator/domain/LongMessageDraft.java
 app/src/main/java/com/fanli/sakurazakatranslator/capture/MemberResolver.java
 app/src/main/java/com/fanli/sakurazakatranslator/capture/MemberSession.java
+tools/MessageHeaderDetectorSelfTest.java
 tools/BodySelectionPolicySelfTest.java
 tools/LongMessageDraftSelfTest.java
 tools/MemberResolverSelfTest.java

@@ -18,7 +18,6 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.HashSet;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
@@ -40,6 +39,8 @@ final class CandidatePanel extends LinearLayout {
     private Runnable refreshLongMessage;
     private final Map<String, CheckBox> fragmentBoxes = new HashMap<>();
     private final List<GroupToggle> groupToggles = new ArrayList<>();
+    private final int automaticSelectionCount;
+    private LinearLayout manualGroups;
     private boolean updatingGroups;
 
     CandidatePanel(Context context, List<TextFragment> nodes, List<MessageGrouper.SelectionGroup> groups,
@@ -50,12 +51,13 @@ final class CandidatePanel extends LinearLayout {
                    BiConsumer<TranslationRequest, TranslationResult> showNearby,
                    LongMessageActions longMessages, MemberResolver.Resolution member,
                    List<StyleProfile> profiles, int preferredProfile, Supplier<StyleProfile> currentStyle,
-                   Consumer<StyleProfile> chooseMember) {
+                   Consumer<StyleProfile> chooseMember, int automaticSelectionCount) {
         super(context);
         this.onSelection = onSelection;
+        this.automaticSelectionCount = Math.max(0, automaticSelectionCount);
         setOrientation(VERTICAL);
-        addView(label("选择需要翻译的原文（确认发送前仅在本地）\n"
-                + "节点通常更能保留表情，但仍需核对是否包含作者、时间或屏外内容。", 15));
+        addView(label("自动识别聊天消息（确认发送前仅在本地）\n"
+                + "姓名和时间只用于分组；无法确认的片段仍可在下方手动调整。", 15));
         summary = label("尚未选择片段", 16);
         addView(summary);
         selectedText = label("", 17);
@@ -66,24 +68,27 @@ final class CandidatePanel extends LinearLayout {
         addLongMessageControls(longMessages);
         addView(translation);
 
-        addView(label("节点文字 · 仅推荐结构明确的正文，请核对", 17));
+        addView(label("自动识别结果", 17));
         Map<String, MessageGrouper.SelectionGroup> groupStarts = new HashMap<>();
         for (var group : groups) groupStarts.put(group.fragmentIds().get(0), group);
-        Set<String> groupedIds = new HashSet<>();
-        for (var group : groups) groupedIds.addAll(group.fragmentIds());
         LinearLayout individual = column();
         LinearLayout auxiliary = column();
+        manualGroups = column();
         int mainCount = 0;
         for (TextFragment fragment : nodes) {
             if (groupStarts.containsKey(fragment.id)) addGroup(groupStarts.get(fragment.id));
             boolean secondary = fragment.role == Role.METADATA || fragment.role == Role.CONTROL
                     || fragment.role == Role.MEDIA_CANDIDATE;
-            addCandidate(secondary ? auxiliary : groupedIds.contains(fragment.id) ? individual : this, fragment);
+            addCandidate(secondary ? auxiliary : individual, fragment);
             if (!secondary) mainCount++;
         }
-        if (mainCount == 0) addView(label("没有正文节点候选，可核对下方辅助信息或图片文字。", 15));
-        if (!groups.isEmpty()) addCollapsible("逐片段调整（可取消组内某一行）", individual);
-        if (auxiliary.getChildCount() > 0) addCollapsible("辅助信息（仅当确为正文时勾选）", auxiliary);
+        if (mainCount == 0) individual.addView(label("没有正文节点候选，可核对下方辅助信息或图片文字。", 15));
+        LinearLayout manual = column();
+        manual.addView(label("自动识别失败或需要修正时，可在这里取消或追加内容。", 14));
+        manual.addView(manualGroups);
+        manual.addView(individual);
+        if (auxiliary.getChildCount() > 0) manual.addView(auxiliary);
+        addCollapsible("手动调整识别内容", manual);
 
         status = label("图片识别准备中…", 15);
         addView(status);
@@ -127,7 +132,10 @@ final class CandidatePanel extends LinearLayout {
         String warning = request != null && request.messages.stream()
                 .anyMatch(m -> m.warnings.contains("CROSS_SOURCE_UNVERIFIED"))
                 ? "\n已混选节点和图片文字，请核对重复内容；按来源分组展示。" : "";
-        summary.setText("已选择 " + count + " 个片段（不是已确认的消息条数）" + warning);
+        String prefix = automaticSelectionCount > 0
+                ? "自动识别并选中 " + count + " 条消息，可手动调整"
+                : "未识别到明确消息头，当前选中 " + count + " 个片段";
+        summary.setText(prefix + warning);
         selectedText.setText(text.isEmpty() ? "无" : text);
         translation.setHasSelection(request != null);
     }
@@ -296,7 +304,7 @@ final class CandidatePanel extends LinearLayout {
             onSelection.accept(group.fragmentIds(), checked);
             updateGroups();
         });
-        addView(box);
+        manualGroups.addView(box);
     }
 
     private void updateGroups() {

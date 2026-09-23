@@ -18,6 +18,7 @@ public final class CandidateSelectionSelfTest {
         sourceWarningsAndTruncation();
         rejectMalformedIdentity();
         atomicGroupSelection();
+        autoSelectionKeepsMetadataOut();
         quickTranslationRequiresCertainSelection();
         System.out.println("CandidateSelectionSelfTest PASS (" + checks + " checks)");
     }
@@ -64,6 +65,20 @@ public final class CandidateSelectionSelfTest {
         check(item.warnings.contains("NODE_DESCRIPTION_UNVERIFIED"), "risk survives");
         check(request.pageToken.equals(PAGE), "request binds to capture identity");
         check(state.selectedText().equals(raw), "preview matches request without normalization");
+    }
+
+    private static void autoSelectionKeepsMetadataOut() {
+        var name = new TextFragment("name", "小田倉 麗奈", "小田倉 麗奈", Source.NODE_TEXT,
+                Role.METADATA, null, new Bounds(10, 10, 200, 30), List.of("name:text"), List.of(), "header", false);
+        var time = new TextFragment("time", "9/21 17:33", "9/21 17:33", Source.NODE_TEXT,
+                Role.METADATA, null, new Bounds(210, 10, 300, 30), List.of("time:text"), List.of(), "header", false);
+        var body = new TextFragment("body", "本文💗", "本文💗", Source.NODE_TEXT,
+                Role.BODY, null, new Bounds(10, 40, 300, 90), List.of("body:text"), List.of(), "header-body", false);
+        var state = new CandidateSelection();
+        state.open(PAGE, List.of(name, time, body), java.util.Set.of("body"));
+        check(state.selectedIds().equals(java.util.Set.of("body")), "high-confidence body starts selected");
+        check(state.selectedText().equals("本文💗"), "metadata is absent from selected text");
+        check(state.setSelected(PAGE, "body", false), "manual correction can remove automatic selection");
     }
 
     private static void arrivalAndPageIdentity() {

@@ -32,9 +32,9 @@ final class TranslationReadingOverlay {
     private ScrollView windowRoot;
     private ScrollView scroll;
     private TextView title, content, status;
-    private Button previous, next, original, dock, expand;
+    private Button previous, next, original, expand;
     private WindowManager.LayoutParams params;
-    private boolean top, expanded;
+    private boolean expanded;
     private boolean restoringScroll;
     private long revision;
 
@@ -50,8 +50,7 @@ final class TranslationReadingOverlay {
         clear();
         if (!session.open(request, result)) return false;
         Rect safe = safeArea();
-        var first = session.message();
-        top = "SCREEN".equals(first.coordinateSpace) && first.top > safe.centerY();
+        // The result belongs to the bottom reading area; the original chat remains visible above it.
         return reopen();
     }
 
@@ -97,7 +96,7 @@ final class TranslationReadingOverlay {
         content = null;
         title = null;
         status = null;
-        previous = next = original = dock = expand = null;
+        previous = next = original = expand = null;
         params = null;
         visibilityChanged.accept(false);
     }
@@ -114,9 +113,9 @@ final class TranslationReadingOverlay {
         card.setPadding(dp(12), dp(8), dp(12), dp(8));
         card.setContentDescription("translation_reading_card");
         GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.WHITE);
-        background.setCornerRadius(dp(18));
-        background.setStroke(dp(1), Color.rgb(226, 208, 218));
+        background.setColor(Color.rgb(250, 250, 250));
+        background.setCornerRadius(dp(16));
+        background.setStroke(dp(1), Color.rgb(232, 229, 232));
         card.setBackground(background);
         card.setElevation(dp(8));
         windowRoot = new ScrollView(context);
@@ -149,9 +148,6 @@ final class TranslationReadingOverlay {
         }, true);
         card.addView(navigation);
         LinearLayout actions = row();
-        dock = addButton(actions, "移到上方", () -> {
-            remember(); top = !top; relayout();
-        }, true);
         expand = addButton(actions, "展开阅读", () -> {
             remember(); expanded = !expanded; relayout();
         }, true);
@@ -186,8 +182,6 @@ final class TranslationReadingOverlay {
         previous.setEnabled(session.index() > 0);
         next.setEnabled(session.index() + 1 < session.size());
         original.setText(session.isOriginal() ? "返回中文" : "查看原文");
-        dock.setText(top ? "移到底部" : "移到上方");
-        dock.setEnabled(!expanded);
         expand.setText(expanded ? "恢复小卡" : "展开阅读");
         // Posts are tied to this render and view. Old callbacks cannot scroll a newer message/window.
         ScrollView owner = scroll;
@@ -234,7 +228,7 @@ final class TranslationReadingOverlay {
         params.height = expanded ? available : Math.min(available, normalHeight);
         params.width = Math.max(1, Math.min(dp(430), safe.width() - dp(16)));
         params.x = safe.left + (safe.width() - params.width) / 2;
-        params.y = expanded || top ? safe.top + dp(8) : safe.bottom - params.height - dp(8);
+        params.y = safe.bottom - params.height - dp(8);
         // Landscape, split-screen and large fonts can leave less space than the controls need.
         // In that case the entire card scrolls, keeping both text and every action reachable.
         boolean compact = available < Math.round(dp(360)

@@ -34,6 +34,29 @@ public final class MessageGrouper {
         return List.copyOf(result);
     }
 
+    /** Returns only clean node-text bodies from high-confidence member/time blocks. */
+    public static Set<String> autoSelectedIds(List<TextFragment> fragments, List<NodeRecord> nodes,
+                                              List<String> memberNames, int windowId) {
+        Set<String> bodyNodeIds = new HashSet<>();
+        for (MessageHeaderDetector.MessageBlock block
+                : MessageHeaderDetector.detect(nodes, memberNames, windowId)) {
+            if (block.confidence() == MessageHeaderDetector.Confidence.HIGH) {
+                bodyNodeIds.addAll(block.bodyNodeIds());
+            }
+        }
+        Set<String> selected = new LinkedHashSet<>();
+        for (TextFragment fragment : fragments) {
+            if (fragment.source != Source.NODE_TEXT || fragment.role != Role.BODY
+                    || !fragment.warnings.isEmpty()) continue;
+            boolean belongs = fragment.provenance.stream().anyMatch(source -> {
+                String nodeId = source.split(":", 2)[0];
+                return bodyNodeIds.contains(nodeId);
+            });
+            if (belongs) selected.add(fragment.id);
+        }
+        return Set.copyOf(selected);
+    }
+
     public static List<ChatMessage> group(List<ChatMessage> selected, List<NodeRecord> nodes) {
         Map<String, NodeRecord> index = new HashMap<>();
         for (NodeRecord node : nodes) {

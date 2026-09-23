@@ -14,3 +14,4 @@ com.fanli.sakurazakatranslator.capture.BodySelectionPolicySelfTest
 com.fanli.sakurazakatranslator.domain.LongMessageDraftSelfTest
 com.fanli.sakurazakatranslator.capture.MemberResolverSelfTest
 com.fanli.sakurazakatranslator.capture.MemberSessionSelfTest
+com.fanli.sakurazakatranslator.capture.MessageHeaderDetectorSelfTest
