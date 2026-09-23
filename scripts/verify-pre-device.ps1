@@ -1,8 +1,8 @@
 param(
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$SdkRoot = $env:ANDROID_SDK_ROOT,
-    [int]$ExpectedVersionCode = 8,
-    [string]$ExpectedVersionName = '0.7.0-reading-card-trial'
+    [int]$ExpectedVersionCode = 9,
+    [string]$ExpectedVersionName = '0.8.0-auto-message-bottom-card'
 )
 
 $ErrorActionPreference = 'Stop'
