@@ -16,6 +16,7 @@ import java.util.Set;
 public final class MemberResolver {
     private static final Set<String> TITLE_RESOURCE_ENTRIES = Set.of(
             "title", "toolbar_title", "chat_title", "member_name", "idol_name", "artist_name");
+    private static final Set<String> BACK_LABELS = Set.of("戻る", "返回", "返回上一页", "back", "navigateup");
 
     private MemberResolver() { }
 
@@ -84,7 +85,8 @@ public final class MemberResolver {
     private static boolean isCandidateNode(ProbeModels.NodeRecord node, ProbeModels.Bounds viewport,
                                            Map<String, ProbeModels.NodeRecord> byId,
                                            Set<String> duplicateNodeIds) {
-        if (node == null || !node.visible || node.collection || node.collectionItem) return false;
+        if (node == null || node.id == null || duplicateNodeIds.contains(node.id)
+                || !node.visible || node.collection || node.collectionItem) return false;
         if (isInteractiveClass(node.className)) return false;
         ProbeModels.Bounds bounds = node.screenBounds;
         if (bounds == null || bounds.isEmpty() || bounds.left < viewport.left || bounds.top < viewport.top
@@ -103,11 +105,46 @@ public final class MemberResolver {
             ProbeModels.NodeRecord parent = byId.get(parentId);
             if (parent == null || parent.windowId != node.windowId) return false;
             if (parent.collection || parent.collectionItem || isScrollingClass(parent.className)) return false;
-            if (isToolbarClass(parent.className)) toolbarAncestor = true;
+            if (isToolbarClass(parent.className)
+                    || (contains(parent.screenBounds, bounds)
+                    && isNavigationHeader(parent, viewport, byId, duplicateNodeIds))) toolbarAncestor = true;
             parentId = parent.parentId;
         }
         if (!semanticTitle && !toolbarAncestor) return false;
         return !node.clickable || semanticTitle || toolbarAncestor;
+    }
+
+    /** A bounded top bar with an explicit Back control is evidence; top position alone is not. */
+    private static boolean isNavigationHeader(ProbeModels.NodeRecord parent, ProbeModels.Bounds viewport,
+                                              Map<String, ProbeModels.NodeRecord> byId,
+                                              Set<String> duplicateNodeIds) {
+        ProbeModels.Bounds bounds = parent.screenBounds;
+        if (!parent.visible || bounds == null || bounds.isEmpty() || bounds.left < viewport.left
+                || bounds.right > viewport.right || bounds.top < viewport.top
+                || (long) bounds.height() * 100 > (long) viewport.height() * 12
+                || (long) (bounds.bottom - viewport.top) * 100 > (long) viewport.height() * 22) return false;
+        for (ProbeModels.NodeRecord child : byId.values()) {
+            if (!parent.id.equals(child.parentId) || child.windowId != parent.windowId
+                    || !child.visible || !child.clickable || duplicateNodeIds.contains(child.id)
+                    || child.collection || child.collectionItem) continue;
+            String cls = simpleClass(child.className);
+            if (!cls.endsWith("button")) continue;
+            ProbeModels.Bounds b = child.screenBounds;
+            if (b == null || b.isEmpty() || b.left < bounds.left || b.top < bounds.top
+                    || b.right > bounds.right || b.bottom > bounds.bottom) continue;
+            String text = usableText(child.rawText);
+            String description = usableText(child.rawDescription);
+            if ((text != null && BACK_LABELS.contains(normalize(text).toLowerCase(Locale.ROOT)))
+                    || (description != null && BACK_LABELS.contains(normalize(description).toLowerCase(Locale.ROOT)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean contains(ProbeModels.Bounds outer, ProbeModels.Bounds inner) {
+        return outer != null && inner.left >= outer.left && inner.top >= outer.top
+                && inner.right <= outer.right && inner.bottom <= outer.bottom;
     }
 
     private static String usableText(String value) {

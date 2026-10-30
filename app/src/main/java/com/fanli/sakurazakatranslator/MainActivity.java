@@ -1,11 +1,14 @@
 package com.fanli.sakurazakatranslator;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
@@ -17,8 +20,14 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import com.fanli.sakurazakatranslator.capture.TranslatorAccessibilityService;
 
 public final class MainActivity extends Activity {
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final Runnable refreshServiceStatus = this::updateServiceStatus;
+    private TextView serviceStatus;
+    private Button recoverService;
+
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         ScrollView scroll = new ScrollView(this);
@@ -60,6 +69,13 @@ public final class MainActivity extends Activity {
         settings.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         root.addView(settings);
 
+        serviceStatus = text("", 15);
+        root.addView(serviceStatus);
+        recoverService = new Button(this);
+        recoverService.setText("检查连接 / 刷新浮窗");
+        recoverService.setOnClickListener(view -> recoverServiceConnection());
+        root.addView(recoverService);
+
         Button translationSettings = new Button(this);
         translationSettings.setText("设置 DeepSeek 和偶像风格");
         translationSettings.setOnClickListener(v -> startActivity(
@@ -84,6 +100,61 @@ public final class MainActivity extends Activity {
                         + "ここが最後です。おやすみなさい🌙");
         scroll.addView(root);
         setContentView(scroll);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        TranslatorAccessibilityService.refreshConnectedService();
+        updateServiceStatus();
+        scheduleStatusChecks();
+    }
+
+    @Override protected void onPause() {
+        main.removeCallbacks(refreshServiceStatus);
+        super.onPause();
+    }
+
+    private boolean isServiceEnabled() {
+        String enabled = Settings.Secure.getString(getContentResolver(),
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabled == null) return false;
+        ComponentName expected = new ComponentName(this, TranslatorAccessibilityService.class);
+        for (String entry : enabled.split(":")) {
+            if (expected.equals(ComponentName.unflattenFromString(entry))) return true;
+        }
+        return false;
+    }
+
+    private void updateServiceStatus() {
+        if (!isServiceEnabled()) {
+            serviceStatus.setText("无障碍尚未开启。请在系统设置中开启本助手。正常退出不需要撤销授权。");
+            recoverService.setEnabled(false);
+        } else if (TranslatorAccessibilityService.isConnected()) {
+            serviceStatus.setText("无障碍已开启，助手服务已连接。返回目标聊天页面后显示翻译浮窗；无需每次重开开关。");
+            recoverService.setEnabled(true);
+            recoverService.setText("刷新浮窗（返回聊天页后显示）");
+        } else {
+            serviceStatus.setText("无障碍开关已开启，但助手服务尚未连接。请先保留故障记录；如持续不恢复，可到系统设置关闭再开启。应用不能自行重新授权或强制连接。");
+            recoverService.setEnabled(true);
+            recoverService.setText("打开无障碍设置（服务未连接）");
+        }
+    }
+
+    private void recoverServiceConnection() {
+        if (!isServiceEnabled()) { updateServiceStatus(); return; }
+        if (TranslatorAccessibilityService.refreshConnectedService()) {
+            updateServiceStatus();
+            return;
+        }
+        // AccessibilityService has no public requestRebind API. Only Android owns this binding.
+        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+    }
+
+    private void scheduleStatusChecks() {
+        main.removeCallbacks(refreshServiceStatus);
+        // Bounded checks while this page is visible; no background polling.
+        main.postDelayed(refreshServiceStatus, 1000);
+        main.postDelayed(refreshServiceStatus, 3000);
     }
 
     private TextView text(String value, int size) {

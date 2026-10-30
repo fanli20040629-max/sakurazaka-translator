@@ -10,8 +10,9 @@ android {
         applicationId = "com.fanli.sakurazakatranslator"
         minSdk = 34
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.8.0-auto-message-bottom-card"
+        versionCode = 10
+        versionName = "0.8.1-member-service-fix"
+        testInstrumentationRunner = "com.fanli.sakurazakatranslator.capture.OverlaySmokeInstrumentation"
     }
 
     buildTypes {

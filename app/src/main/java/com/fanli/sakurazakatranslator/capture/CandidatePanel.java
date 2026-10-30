@@ -9,8 +9,8 @@ import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Spinner;
-import android.widget.ArrayAdapter;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import com.fanli.sakurazakatranslator.domain.TranslationRequest;
 import com.fanli.sakurazakatranslator.domain.TranslationResult;
 import com.fanli.sakurazakatranslator.domain.StyleProfile;
@@ -22,7 +22,7 @@ import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
-import java.util.function.Consumer;
+import java.util.function.Predicate;
 import static com.fanli.sakurazakatranslator.capture.ProbeModels.*;
 
 /** Renders one capture. The service owns page validity, selection, bitmap lifetime and all work. */
@@ -51,7 +51,7 @@ final class CandidatePanel extends LinearLayout {
                    BiConsumer<TranslationRequest, TranslationResult> showNearby,
                    LongMessageActions longMessages, MemberResolver.Resolution member,
                    List<StyleProfile> profiles, int preferredProfile, Supplier<StyleProfile> currentStyle,
-                   Consumer<StyleProfile> chooseMember, int automaticSelectionCount) {
+                   Predicate<StyleProfile> chooseMember, int automaticSelectionCount) {
         super(context);
         this.onSelection = onSelection;
         this.automaticSelectionCount = Math.max(0, automaticSelectionCount);
@@ -158,10 +158,11 @@ final class CandidatePanel extends LinearLayout {
     }
 
     private void addMemberControls(MemberResolver.Resolution member, List<StyleProfile> profiles, int preferredProfile,
-                                   Consumer<StyleProfile> chooseMember) {
+                                   Predicate<StyleProfile> chooseMember) {
         String description = switch (member.status()) {
             case MATCHED -> "当前成员：" + member.name() + " · 已自动匹配风格";
-            case UNKNOWN -> "当前标题：" + member.name() + " · 尚无匹配档案，请手动确认";
+            case UNKNOWN -> "当前标题：" + member.name()
+                    + " · 尚无匹配档案。请在设置中填写此日文全名或完整别名；本次可手动确认。";
             case AMBIGUOUS -> "成员姓名或档案匹配有冲突，请手动核对本页成员";
             case MISSING -> "未确认成员：没有可靠的聊天标题，请手动核对本页成员";
         };
@@ -170,26 +171,39 @@ final class CandidatePanel extends LinearLayout {
         LinearLayout manual = column();
         manual.addView(label("只对本次取字生效；重新取字后重新识别。不能凭正文中提到的人名选择。"
                 + "若补取提示身份不一致，请先清除旧草稿，再重新收集。", 14));
-        Spinner picker = new Spinner(getContext());
-        picker.setAdapter(new ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_dropdown_item,
-                profiles.stream().map(profile -> profile.displayName).toList()));
+        // This panel uses a Service Context. Keep choices in its existing overlay window:
+        // a themed Spinner may create a Dialog that requires an Activity window token.
+        RadioGroup picker = new RadioGroup(getContext());
+        picker.setOrientation(RadioGroup.VERTICAL);
         int selected = Math.max(0, Math.min(preferredProfile, profiles.size() - 1));
         if (member.profile() != null) {
             for (int i = 0; i < profiles.size(); i++) {
                 if (profiles.get(i).id.equals(member.profile().id)) { selected = i; break; }
             }
         }
-        picker.setSelection(selected);
+        for (int i = 0; i < profiles.size(); i++) {
+            RadioButton option = new RadioButton(getContext());
+            option.setId(View.generateViewId());
+            option.setText(profiles.get(i).displayName);
+            option.setTextColor(Color.BLACK);
+            option.setTag(profiles.get(i));
+            picker.addView(option);
+            if (i == selected) picker.check(option.getId());
+        }
         manual.addView(picker);
         Button confirm = new Button(getContext());
         confirm.setText("确认本页成员 / 更正风格");
+        confirm.setEnabled(!profiles.isEmpty());
         confirm.setOnClickListener(view -> {
-            int index = picker.getSelectedItemPosition();
-            if (index < 0 || index >= profiles.size()) return;
+            View option = picker.findViewById(picker.getCheckedRadioButtonId());
+            if (option == null || !(option.getTag() instanceof StyleProfile profile)) return;
+            if (!chooseMember.test(profile)) {
+                memberStatus.setText("页面已变化，请重新取字后确认成员。");
+                return;
+            }
             invalidateTranslation();
-            chooseMember.accept(profiles.get(index));
             refreshLongMessage.run();
-            memberStatus.setText("本次手动确认：" + profiles.get(index).displayName + " · 不启用快捷发送");
+            memberStatus.setText("本次手动确认：" + profile.displayName + " · 不启用快捷发送");
         });
         manual.addView(confirm);
         if (member.status() == MemberResolver.Status.MATCHED) addCollapsible("手动更正成员风格", manual);

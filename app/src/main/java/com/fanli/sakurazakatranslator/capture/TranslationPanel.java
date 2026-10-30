@@ -50,12 +50,6 @@ final class TranslationPanel extends LinearLayout {
         addView(useDraft);
         prepare = button("翻译");
         prepare.setEnabled(false);
-        prepare.setOnClickListener(v -> {
-            prepare();
-            // Automatic recognition has already supplied the selection; one tap is the
-            // explicit network/charging confirmation. Manual corrections use the same path.
-            if (confirmed != null && send.isEnabled()) send.performClick();
-        });
         confirmation = new LinearLayout(context);
         confirmation.setOrientation(VERTICAL);
         original = label("");
@@ -87,6 +81,12 @@ final class TranslationPanel extends LinearLayout {
         });
         useDraft.setOnCheckedChangeListener((button, checked) -> invalidateTranslation());
         refreshDraft();
+        // Install after all final view fields are initialized (required by javac).
+        prepare.setOnClickListener(v -> {
+            prepare();
+            // One tap explicitly confirms sending the current selection.
+            if (confirmed != null && send.isEnabled()) send.performClick();
+        });
     }
 
     void setHasSelection(boolean value) {

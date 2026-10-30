@@ -13,6 +13,39 @@ public final class MemberResolverSelfTest {
         StyleProfile shiori = new StyleProfile("shiori", "月野しおり", "丁寧に");
         List<StyleProfile> profiles = List.of(akari, shiori);
 
+        // A custom app bar can expose ordinary views rather than Android Toolbar/title IDs.
+        var customHeader = customHeader("花野 あかり", "戻る", 7, false);
+        assertResolution(resolve(customHeader, profiles), MemberResolver.Status.MATCHED,
+                "profile:akari", "花野 あかり", akari, "custom-name");
+        check(resolve(customHeader("花野あかり", "メニュー", 7, false), profiles).status()
+                == MemberResolver.Status.MISSING, "a menu button is not a navigation anchor");
+        check(resolve(customHeader("花野あかり", "戻る", 8, false), profiles).status()
+                == MemberResolver.Status.MISSING, "navigation in another window is rejected");
+        check(resolve(customHeader("花野あかり", "戻る", 7, true), profiles).status()
+                == MemberResolver.Status.MISSING, "a scrolling header-like row is rejected");
+        var tallHeader = new ArrayList<>(customHeader);
+        tallHeader.set(0, withBounds(tallHeader.get(0), VIEWPORT));
+        check(resolve(tallHeader, profiles).status() == MemberResolver.Status.MISSING,
+                "full-screen containers do not establish header structure");
+        assertResolution(resolve(customHeader("雪野みらい", "Back", 7, false), profiles),
+                MemberResolver.Status.UNKNOWN, "name:雪野みらい", "雪野みらい", null, "custom-name");
+        var conflictingHeader = new ArrayList<>(customHeader);
+        conflictingHeader.add(title("other-title", "月野しおり"));
+        check(resolve(conflictingHeader, profiles).status() == MemberResolver.Status.AMBIGUOUS,
+                "custom and semantic titles cannot silently disagree");
+        var hiddenBack = new ArrayList<>(customHeader);
+        hiddenBack.set(1, withVisibility(hiddenBack.get(1), false));
+        check(resolve(hiddenBack, profiles).status() == MemberResolver.Status.MISSING,
+                "invisible back control cannot establish a header");
+        var outsideBar = new ArrayList<>(customHeader);
+        outsideBar.set(2, withBounds(outsideBar.get(2), new ProbeModels.Bounds(50, 200, 400, 300)));
+        check(resolve(outsideBar, profiles).status() == MemberResolver.Status.MISSING,
+                "a title outside its claimed custom bar must be rejected");
+        var duplicateTitle = new ArrayList<>(customHeader);
+        duplicateTitle.add(customHeader.get(2));
+        check(resolve(duplicateTitle, profiles).status() == MemberResolver.Status.MISSING,
+                "duplicate title node IDs do not establish reliable identity");
+
         assertResolution(resolve(List.of(title("title", "花野あかり")), profiles),
                 MemberResolver.Status.MATCHED, "profile:akari", "花野あかり", akari, "title");
         assertResolution(resolve(List.of(title("title", " 花野\u3000あかり ")), profiles),
@@ -110,6 +143,18 @@ public final class MemberResolverSelfTest {
 
     private static MemberResolver.Resolution resolve(List<ProbeModels.NodeRecord> nodes, List<StyleProfile> profiles) {
         return MemberResolver.resolve(nodes, VIEWPORT, profiles, false);
+    }
+
+    private static List<ProbeModels.NodeRecord> customHeader(String name, String backDescription,
+                                                            int backWindow, boolean scrollable) {
+        return List.of(
+                node("bar", null, 7, null, null,
+                        scrollable ? "android.widget.ScrollView" : "android.widget.FrameLayout", null,
+                        new ProbeModels.Bounds(0, 30, 1000, 160), true, false, false, false),
+                node("back", "bar", backWindow, null, backDescription, "android.widget.ImageButton", null,
+                        new ProbeModels.Bounds(0, 40, 40, 120), true, true, false, false),
+                node("custom-name", "bar", 7, name, null, "android.widget.TextView", null,
+                        new ProbeModels.Bounds(50, 40, 400, 120), true, false, false, false));
     }
 
     private static ProbeModels.NodeRecord title(String id, String text) {

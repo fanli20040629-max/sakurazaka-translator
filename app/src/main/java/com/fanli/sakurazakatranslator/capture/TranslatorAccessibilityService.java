@@ -16,6 +16,7 @@ import android.hardware.HardwareBuffer;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -48,12 +49,15 @@ import com.fanli.sakurazakatranslator.domain.ChatMessage;
 
 import java.util.List;
 import java.util.Locale;
+import java.lang.ref.WeakReference;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static com.fanli.sakurazakatranslator.capture.ProbeModels.*;
 
 public final class TranslatorAccessibilityService extends AccessibilityService {
+    private static final String TAG = "TranslatorService";
+    private static WeakReference<TranslatorAccessibilityService> connectedService = new WeakReference<>(null);
     private static final StyleProfile DEFAULT_STYLE =
             new StyleProfile("default", "默认风格", "保留原文语气、符号和换行");
 
@@ -105,6 +109,9 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     };
 
     @Override protected void onServiceConnected() {
+        super.onServiceConnected();
+        // A system rebind can reuse this instance; never register receivers or keep old results twice.
+        if (windowManager != null) invalidateAndClear(true);
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         readingOverlay = new TranslationReadingOverlay(this, windowManager, this::capture,
                 visible -> {
@@ -120,9 +127,34 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_SCREEN_OFF);
         filter.addAction(Intent.ACTION_USER_PRESENT);
-        registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        receiverRegistered = true;
+        if (!receiverRegistered) {
+            registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            receiverRegistered = true;
+        }
+        connectedService = new WeakReference<>(this);
+        Log.i(TAG, "SERVICE_CONNECTED");
         refreshTriggerVisibility();
+    }
+
+    /** Authorization and a live connection are separate. No strong static service/Activity reference. */
+    public static boolean isConnected() {
+        TranslatorAccessibilityService service = connectedService.get();
+        return service != null && !service.destroyed;
+    }
+
+    /** Refresh only local visibility. Never read a message or send a translation from the home page. */
+    public static boolean refreshConnectedService() {
+        TranslatorAccessibilityService service = connectedService.get();
+        if (service == null || service.destroyed) return false;
+        service.main.post(service::refreshTriggerVisibility);
+        return true;
+    }
+
+    @Override public boolean onUnbind(Intent intent) {
+        if (connectedService.get() == this) connectedService.clear();
+        invalidateAndClear(true);
+        Log.i(TAG, "SERVICE_UNBOUND");
+        return super.onUnbind(intent);
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -157,11 +189,12 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onInterrupt() {
+        Log.i(TAG, "SERVICE_INTERRUPTED");
         invalidateAndClear(true);
     }
 
     private void refreshTriggerVisibility() {
-        if (destroyed || windowManager == null) {
+        if (destroyed || windowManager == null || connectedService.get() != this) {
             invalidateAndClear(true);
             return;
         }
@@ -590,13 +623,15 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
                 }, previewMember, new TranslationSettings(this).profiles(),
                 new TranslationSettings(this).selectedProfile(),
                 () -> memberSession.style(page), profile -> {
+                    if (!page.equals(previewPage) || !selectionAllowed(page)) return false;
                     StyleProfile previous = memberSession.style(page);
-                    memberSession.choose(page, profile);
+                    if (!memberSession.choose(page, profile)) return false;
                     if (previous != null && !previous.id.equals(profile.id)) {
                         memberSession.clearDraft();
                         longMessageDraft.clear();
                         updateTriggerLabel();
                     }
+                    return true;
                 }, autoSelected.size());
         if (getPackageName().equals(page.packageName()) && ProbePreferences.syntheticMode(this)) {
             candidatePanel.addLocalReadingDemo(() -> {
@@ -999,6 +1034,8 @@ public final class TranslatorAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onDestroy() {
+        if (connectedService.get() == this) connectedService.clear();
+        Log.i(TAG, "SERVICE_DESTROYED");
         translationRunner.close();
         synchronized (lifecycleLock) {
             destroyed = true;
